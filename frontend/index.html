@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>小道瓊 CFD 模擬交易平台</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<header>
+  <div class="title">
+    <span class="status-dot" id="status-dot"></span>
+    <h1 id="instrument-name">小道瓊 CFD</h1>
+    <span class="symbol" id="instrument-symbol">US30-MINI</span>
+    <span class="sim-badge">模擬環境 · 非真實行情/資金</span>
+  </div>
+  <div class="header-right">
+    <div class="price-readout">
+      <div class="mid" id="price-mid">--</div>
+      <div class="ba">Bid <span id="price-bid">--</span> &nbsp;/&nbsp; Ask <span id="price-ask">--</span></div>
+    </div>
+    <div class="header-user" id="header-user"></div>
+    <a class="link-btn hidden" id="admin-link" href="/admin.html">管理後台</a>
+    <button class="link-btn" id="logout-btn">登出</button>
+  </div>
+</header>
+
+<main>
+  <section class="panel" id="chart-panel">
+    <div class="chart-toolbar">
+      <div class="chart-modes">
+        <button class="chart-mode-btn active" id="mode-line" data-mode="line">線圖</button>
+        <button class="chart-mode-btn" id="mode-candle" data-mode="candle">K線 (1分)</button>
+      </div>
+      <div class="chart-modes" id="chart-range-group">
+        <button class="chart-range-btn" data-range="5">5分</button>
+        <button class="chart-range-btn" data-range="15">15分</button>
+        <button class="chart-range-btn" data-range="30">30分</button>
+        <button class="chart-range-btn" data-range="60">1小時</button>
+      </div>
+      <div class="chart-legend" id="chart-legend"></div>
+    </div>
+    <div class="chart-canvas-wrap">
+      <canvas id="chart"></canvas>
+      <div class="chart-tooltip hidden" id="chart-tooltip"></div>
+    </div>
+  </section>
+
+  <aside class="sidebar">
+    <div class="panel">
+      <h2>帳戶</h2>
+      <div class="stat-grid">
+        <div class="label">餘額 Balance</div><div class="value" id="acc-balance">--</div>
+        <div class="label">淨值 Equity</div><div class="value" id="acc-equity">--</div>
+        <div class="label">未實現損益</div><div class="value" id="acc-upnl">--</div>
+        <div class="label">已用保證金</div><div class="value" id="acc-used-margin">--</div>
+        <div class="label">可用保證金</div><div class="value" id="acc-free-margin">--</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>下單 Order Ticket</h2>
+      <div class="tabs">
+        <button class="tab-btn buy active" id="tab-buy" data-side="BUY">Buy</button>
+        <button class="tab-btn sell" id="tab-sell" data-side="SELL">Sell</button>
+      </div>
+      <div class="field">
+        <label for="order-type">訂單類型</label>
+        <select id="order-type">
+          <option value="MARKET">市價 Market</option>
+          <option value="LIMIT">限價 Limit</option>
+        </select>
+      </div>
+      <div class="field" id="limit-price-field">
+        <label for="limit-price">限價 Limit Price</label>
+        <input type="number" id="limit-price" step="1" />
+      </div>
+      <div class="field">
+        <label for="order-qty">口數 Qty</label>
+        <input type="number" id="order-qty" step="1" min="1" value="1" />
+      </div>
+      <button class="submit buy" id="submit-order">Buy US30-MINI</button>
+      <div id="order-error" style="color: var(--down); font-size: 12px; margin-top: 8px;"></div>
+    </div>
+
+    <div class="panel">
+      <h2>目前部位 Position</h2>
+      <div id="position-empty" class="stat-grid"><div class="label">無部位</div><div class="value">Flat</div></div>
+      <div id="position-detail" class="hidden clickable-card">
+        <div class="stat-grid">
+          <div class="label">方向/口數</div><div class="value" id="pos-side-qty">--</div>
+          <div class="label">均價</div><div class="value" id="pos-avg">--</div>
+          <div class="label">未實現損益</div><div class="value" id="pos-upnl">--</div>
+          <div class="label">停損 / 停利</div><div class="value" id="pos-sl-tp">--</div>
+        </div>
+        <div class="clickable-card-hint">點擊管理停損/停利、平倉 →</div>
+      </div>
+    </div>
+  </aside>
+
+  <div class="wide-panels">
+    <div class="panel">
+      <h2>委託單 Orders</h2>
+      <table>
+        <thead><tr><th>時間</th><th>方向</th><th>類型</th><th>口數</th><th>價格</th><th>狀態</th><th></th></tr></thead>
+        <tbody id="orders-body"><tr class="empty-row"><td colspan="7">尚無委託</td></tr></tbody>
+      </table>
+    </div>
+    <div class="panel">
+      <h2>成交紀錄 Trades</h2>
+      <table>
+        <thead><tr><th>時間</th><th>方向</th><th>口數</th><th>成交價</th><th>已實現損益</th><th></th></tr></thead>
+        <tbody id="trades-body"><tr class="empty-row"><td colspan="6">尚無成交</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</main>
+
+<div class="modal-backdrop hidden" id="position-modal">
+  <div class="modal">
+    <span class="modal-close" id="position-modal-close">✕</span>
+    <h2>部位管理 Position</h2>
+    <div class="stat-grid" id="modal-pos-stats">
+      <div class="label">方向/口數</div><div class="value" id="modal-pos-side-qty">--</div>
+      <div class="label">均價</div><div class="value" id="modal-pos-avg">--</div>
+      <div class="label">未實現損益</div><div class="value" id="modal-pos-upnl">--</div>
+    </div>
+
+    <h2 style="margin-top:18px;">停損 / 停利</h2>
+    <div class="field-row">
+      <div class="field">
+        <label for="modal-pos-sl">停損 SL</label>
+        <input type="number" id="modal-pos-sl" step="1" />
+      </div>
+      <div class="field">
+        <label for="modal-pos-tp">停利 TP</label>
+        <input type="number" id="modal-pos-tp" step="1" />
+      </div>
+    </div>
+    <button class="mini-btn" id="modal-pos-update-risk" style="width:100%;">更新停損/停利</button>
+
+    <h2 style="margin-top:18px;">平倉</h2>
+    <div class="field-row">
+      <button class="mini-btn hidden" id="modal-pos-close-record" style="flex:1;">平倉此筆</button>
+      <button class="mini-btn" id="modal-pos-close-all" style="flex:1; color: var(--down);">全部平倉</button>
+    </div>
+    <div id="modal-pos-error" style="color: var(--down); font-size: 12px; margin-top: 8px;"></div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

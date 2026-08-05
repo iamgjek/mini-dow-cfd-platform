@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>登入 · 小道瓊 CFD 模擬交易平台</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div class="auth-shell">
+  <div class="auth-card">
+    <h1 id="form-title">登入</h1>
+    <div class="sub">小道瓊 CFD 模擬交易平台 · 練習帳戶</div>
+    <div class="auth-error hidden" id="auth-error"></div>
+
+    <div class="field" id="field-display-name" style="display:none;">
+      <label for="display-name">顯示名稱</label>
+      <input type="text" id="display-name" autocomplete="name" />
+    </div>
+    <div class="field">
+      <label for="email">Email</label>
+      <input type="email" id="email" autocomplete="username" />
+    </div>
+    <div class="field">
+      <label for="password">密碼</label>
+      <input type="password" id="password" autocomplete="current-password" />
+    </div>
+    <button class="submit buy" id="submit-btn" style="margin-top:6px;">登入</button>
+
+    <div class="auth-switch">
+      <span id="switch-text">還沒有帳戶?</span>
+      <a id="switch-link">註冊新帳戶</a>
+    </div>
+  </div>
+</div>
+<script src="auth.js"></script>
+</body>
+</html>

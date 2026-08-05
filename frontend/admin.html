@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>管理後台 · 小道瓊 CFD 模擬交易平台</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<header>
+  <div class="title">
+    <h1>管理後台</h1>
+    <span class="symbol">會員與帳戶管理</span>
+  </div>
+  <div class="header-right">
+    <div class="header-user" id="header-user"></div>
+    <a class="link-btn" href="/">回交易平台</a>
+    <button class="link-btn" id="logout-btn">登出</button>
+  </div>
+</header>
+
+<main style="grid-template-columns: 1fr;">
+  <section class="panel">
+    <h2>平台統計</h2>
+    <div class="stat-grid" id="stats-grid" style="grid-template-columns: repeat(4, 1fr);">
+      <div class="label">會員數</div><div class="value" id="stat-users">--</div>
+      <div class="label">總餘額</div><div class="value" id="stat-balance">--</div>
+      <div class="label">持有部位會員數</div><div class="value" id="stat-open">--</div>
+      <div class="label">總曝險口數</div><div class="value" id="stat-exposure">--</div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>平台設定</h2>
+    <div class="field-row" style="align-items: flex-end;">
+      <div class="field" style="max-width: 220px;">
+        <label for="setting-initial-balance">新會員初始保證金</label>
+        <input type="number" id="setting-initial-balance" step="100" min="0" />
+      </div>
+      <button class="mini-btn" id="settings-save" style="height: 34px;">儲存</button>
+      <span id="settings-saved" style="color: var(--up); font-size: 12px; display:none;">已儲存</span>
+    </div>
+    <div style="color: var(--muted); font-size: 12px; margin-top: 4px;">僅套用於之後新註冊的會員,不影響現有會員的餘額。</div>
+  </section>
+
+  <section class="panel">
+    <h2>會員列表</h2>
+    <div class="admin-table-wrap">
+      <table>
+        <thead>
+          <tr><th style="text-align:left;">Email</th><th style="text-align:left;">名稱</th><th>角色</th><th>狀態</th><th>餘額</th><th>淨值</th><th>未實現損益</th><th>部位</th><th></th></tr>
+        </thead>
+        <tbody id="users-body"><tr class="empty-row"><td colspan="9">載入中...</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<div class="modal-backdrop hidden" id="detail-modal">
+  <div class="modal">
+    <span class="modal-close" id="modal-close">✕</span>
+    <h2 id="detail-title">會員詳情</h2>
+    <div class="stat-grid" id="detail-account"></div>
+
+    <h2 style="margin-top:18px;">調整餘額(模擬入金/扣款)</h2>
+    <div class="field-row">
+      <div class="field"><label>金額(正數入金,負數扣款)</label><input type="number" id="adjust-amount" step="1" /></div>
+      <div class="field"><label>備註</label><input type="text" id="adjust-reason" /></div>
+    </div>
+    <button class="mini-btn" id="adjust-submit" style="width:100%;">送出調整</button>
+    <div id="adjust-error" style="color: var(--down); font-size: 12px; margin-top: 6px;"></div>
+
+    <h2 style="margin-top:18px;">最近委託</h2>
+    <table>
+      <thead><tr><th>時間</th><th>方向</th><th>口數</th><th>價格</th><th>狀態</th></tr></thead>
+      <tbody id="detail-orders"></tbody>
+    </table>
+
+    <h2 style="margin-top:14px;">最近成交</h2>
+    <table>
+      <thead><tr><th>時間</th><th>方向</th><th>口數</th><th>成交價</th><th>已實現損益</th></tr></thead>
+      <tbody id="detail-trades"></tbody>
+    </table>
+  </div>
+</div>
+
+<script src="admin.js"></script>
+</body>
+</html>
