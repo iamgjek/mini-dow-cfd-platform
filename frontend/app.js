@@ -62,6 +62,8 @@
         $("instrument-name").textContent = d.instrument.name;
         $("instrument-symbol").textContent = d.instrument.symbol;
         state.multiplier = d.instrument.multiplier;
+        setSide(state.side);
+        if (d.tick && d.tick.mid) renderPrice(d.tick);
         state.history = d.history;
         state.account = d.account;
         state.position = d.position;
@@ -72,7 +74,7 @@
       }
       case "tick": {
         state.history.push({ ts: msg.data.ts, price: msg.data.mid });
-        if (state.history.length > 3600) state.history.shift();
+        if (state.history.length > 20000) state.history.shift(); // keep in sync with backend MAX_TICK_HISTORY
         renderPrice(msg.data);
         drawChart();
         break;
@@ -346,8 +348,13 @@
     ctx.clearRect(0, 0, w, h);
 
     const isCandle = state.chartMode === "candle";
-    const linePoints = state.history.slice(-state.lineRangeSeconds);
-    const candles = isCandle ? buildCandles(state.history.slice(-3600), CANDLE_INTERVAL_SECONDS) : null;
+    // Real quotes don't arrive on a steady 1-tick/sec cadence, so windows are
+    // cut by actual timestamp rather than array-index count.
+    const lastTs = state.history.length ? state.history[state.history.length - 1].ts : Date.now() / 1000;
+    const linePoints = state.history.filter((p) => p.ts >= lastTs - state.lineRangeSeconds);
+    const candles = isCandle
+      ? buildCandles(state.history.filter((p) => p.ts >= lastTs - 2 * 60 * 60), CANDLE_INTERVAL_SECONDS)
+      : null;
     const plotData = isCandle ? candles : linePoints;
     if (!plotData || plotData.length < 2) return;
 

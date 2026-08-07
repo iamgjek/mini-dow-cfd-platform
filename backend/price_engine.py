@@ -1,6 +1,4 @@
 import asyncio
-import math
-import random
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -18,20 +16,21 @@ class Tick:
 
 
 class PriceEngine:
-    """Generates a synthetic random-walk price series for the demo instrument.
+    """Live quote client for a real TF-market TCP feed (see config.py).
 
-    Uses a discretized geometric Brownian motion so the walk stays positive
-    and volatility scales sensibly with the reference price, purely for a
-    realistic-looking simulation — not derived from any real market feed.
+    The feed is a firehose of every symbol on the market, one `{...}`-framed
+    CSV record per line; this filters it down to the single configured
+    instrument and re-exposes it as the same Tick/subscribe/history interface
+    the rest of the app already expects, so the trading engine never has to
+    know its prices come from a socket instead of a formula.
     """
 
     def __init__(self) -> None:
-        self.mid: float = config.REFERENCE_PRICE
+        self.mid: float = 0.0
+        self.bid: float = 0.0
+        self.ask: float = 0.0
         self.history: Deque[Tuple[float, float]] = deque(maxlen=config.MAX_TICK_HISTORY)
-        self.history.append((time.time(), self.mid))
         self._listeners: List[Callable[[Tick], None]] = []
-        self._dt_years = config.TICK_INTERVAL_SECONDS / (365 * 24 * 60 * 60)
-        self._sigma = config.ANNUAL_VOLATILITY
 
     def subscribe(self, callback: Callable[[Tick], None]) -> None:
         self._listeners.append(callback)
@@ -41,25 +40,74 @@ class PriceEngine:
             self._listeners.remove(callback)
 
     def latest_tick(self) -> Tick:
-        half_spread = config.SPREAD / 2
-        return Tick(
-            ts=time.time(),
-            mid=self.mid,
-            bid=round(self.mid - half_spread, 2),
-            ask=round(self.mid + half_spread, 2),
+        return Tick(ts=time.time(), mid=self.mid, bid=self.bid, ask=self.ask)
+
+    def _connect_string(self) -> str:
+        if not config.TF_USERNAME or not config.TF_PASSWORD:
+            raise RuntimeError(
+                "TF_USERNAME / TF_PASSWORD are not set. Set them to your quote "
+                "feed credentials (see .env.example)."
+            )
+        return (
+            f";uz=2;utf8=1;wt1=0;m={config.TF_MARKET};"
+            f"u={config.TF_USERNAME};p={config.TF_PASSWORD};"
         )
 
-    def _step(self) -> None:
-        drift = 0.0
-        shock = self._sigma * math.sqrt(self._dt_years) * random.gauss(0, 1)
-        self.mid *= math.exp(drift - 0.5 * self._sigma ** 2 * self._dt_years + shock)
-        self.mid = round(self.mid / config.TICK_SIZE) * config.TICK_SIZE
-        self.history.append((time.time(), self.mid))
+    def _handle_line(self, line: str) -> None:
+        inner = line.strip().strip("{}")
+        if not inner:
+            return
+        parts = inner.split(",")
+        # {header, time, code, name, ...29 quote fields..., footer} == 36 fields.
+        if len(parts) < 36 or parts[0] == "A":
+            return  # too short to be a quote row, or an "A,OK,..." info packet
+        if parts[2] != config.TF_SYMBOL:
+            return
+
+        try:
+            last = float(parts[12])
+            bid = float(parts[15])
+            ask = float(parts[25])
+        except ValueError:
+            return
+        if last <= 0:
+            return
+
+        self.mid = last
+        self.bid = bid if bid > 0 else last
+        self.ask = ask if ask > 0 else last
+        now = time.time()
+        self.history.append((now, self.mid))
+
+        tick = Tick(ts=now, mid=self.mid, bid=self.bid, ask=self.ask)
+        for listener in list(self._listeners):
+            listener(tick)
 
     async def run(self) -> None:
+        connect_str = self._connect_string().encode("utf-8")
+        backoff = 1.0
         while True:
-            await asyncio.sleep(config.TICK_INTERVAL_SECONDS)
-            self._step()
-            tick = self.latest_tick()
-            for listener in list(self._listeners):
-                listener(tick)
+            writer = None
+            try:
+                reader, writer = await asyncio.open_connection(config.TF_HOST, config.TF_PORT)
+                writer.write(connect_str)
+                await writer.drain()
+                backoff = 1.0
+                last_heartbeat = time.time()
+
+                while True:
+                    raw = await asyncio.wait_for(reader.readuntil(b"\n"), timeout=30)
+                    self._handle_line(raw.decode("utf-8", errors="replace"))
+
+                    if time.time() - last_heartbeat > config.TF_HEARTBEAT_SECONDS:
+                        writer.write(connect_str)
+                        await writer.drain()
+                        last_heartbeat = time.time()
+            except (OSError, asyncio.TimeoutError, asyncio.IncompleteReadError):
+                pass
+            finally:
+                if writer is not None:
+                    writer.close()
+
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 30)

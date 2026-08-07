@@ -67,7 +67,7 @@ async def lifespan(app: FastAPI):
     task.cancel()
 
 
-app = FastAPI(title="Mini Dow CFD Paper Trading Platform", lifespan=lifespan)
+app = FastAPI(title="Mini TAIEX (小台指) Paper Trading Platform", lifespan=lifespan)
 
 
 def user_to_dict(row: dict) -> dict:
@@ -158,7 +158,6 @@ def get_instrument():
         "name": config.INSTRUMENT_NAME,
         "tick_size": config.TICK_SIZE,
         "multiplier": config.CONTRACT_MULTIPLIER,
-        "spread": config.SPREAD,
         "margin_rate": config.MARGIN_RATE,
     }
 
@@ -330,6 +329,7 @@ async def ws_endpoint(ws: WebSocket):
         "type": "snapshot",
         "data": {
             "instrument": get_instrument(),
+            "tick": _serialize(price_engine.latest_tick()),
             "history": get_history(),
             "account": _serialize(engine.account_snapshot()),
             "position": _serialize(engine.position),
