@@ -84,11 +84,15 @@ class PriceEngine:
             listener(tick)
 
     async def run(self) -> None:
-        connect_str = self._connect_string().encode("utf-8")
         backoff = 1.0
         while True:
             writer = None
             try:
+                # Recomputed every attempt (not hoisted above the loop) so a
+                # missing/misconfigured credential just gets retried with
+                # backoff forever instead of permanently killing this
+                # fire-and-forget background task on the first failure.
+                connect_str = self._connect_string().encode("utf-8")
                 reader, writer = await asyncio.open_connection(config.TF_HOST, config.TF_PORT)
                 writer.write(connect_str)
                 await writer.drain()
@@ -103,7 +107,7 @@ class PriceEngine:
                         writer.write(connect_str)
                         await writer.drain()
                         last_heartbeat = time.time()
-            except (OSError, asyncio.TimeoutError, asyncio.IncompleteReadError):
+            except (OSError, asyncio.TimeoutError, asyncio.IncompleteReadError, RuntimeError):
                 pass
             finally:
                 if writer is not None:
