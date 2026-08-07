@@ -1,10 +1,13 @@
 import asyncio
+import logging
 import time
 from collections import deque
 from dataclasses import dataclass
 from typing import Callable, Deque, List, Tuple
 
 from . import config
+
+logger = logging.getLogger("price_engine")
 
 
 @dataclass(frozen=True)
@@ -93,22 +96,30 @@ class PriceEngine:
                 # backoff forever instead of permanently killing this
                 # fire-and-forget background task on the first failure.
                 connect_str = self._connect_string().encode("utf-8")
-                reader, writer = await asyncio.open_connection(config.TF_HOST, config.TF_PORT)
+                logger.info("connecting to feed %s:%s ...", config.TF_HOST, config.TF_PORT)
+                reader, writer = await asyncio.wait_for(
+                    asyncio.open_connection(config.TF_HOST, config.TF_PORT), timeout=10
+                )
                 writer.write(connect_str)
                 await writer.drain()
+                logger.info("feed connected, sent login string")
                 backoff = 1.0
                 last_heartbeat = time.time()
+                lines_received = 0
 
                 while True:
                     raw = await asyncio.wait_for(reader.readuntil(b"\n"), timeout=30)
+                    lines_received += 1
+                    if lines_received == 1:
+                        logger.info("first line from feed: %r", raw[:200])
                     self._handle_line(raw.decode("utf-8", errors="replace"))
 
                     if time.time() - last_heartbeat > config.TF_HEARTBEAT_SECONDS:
                         writer.write(connect_str)
                         await writer.drain()
                         last_heartbeat = time.time()
-            except (OSError, asyncio.TimeoutError, asyncio.IncompleteReadError, RuntimeError):
-                pass
+            except (OSError, asyncio.TimeoutError, asyncio.IncompleteReadError, RuntimeError) as exc:
+                logger.warning("feed connection lost/failed: %s: %s", type(exc).__name__, exc)
             finally:
                 if writer is not None:
                     writer.close()

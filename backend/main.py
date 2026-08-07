@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -10,6 +11,8 @@ from pydantic import BaseModel
 
 from . import auth, config, db
 from .engine_manager import EngineManager
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 from .models import (
     AdjustBalanceRequest,
     LoginRequest,
