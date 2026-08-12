@@ -213,6 +213,34 @@ th { color: var(--muted); font-weight: 500; }
   .wide-panels { grid-template-columns: 1fr; }
 }
 
+@media (max-width: 640px) {
+  /* Header packed .title and .header-right into one unwrapped row, so on
+     narrow screens they'd fight for space until .title got squeezed to
+     near-zero width — CJK text has no spaces to break on, so it wrapped one
+     character per line instead of failing gracefully. Stacking the two
+     halves (each free to wrap internally) fixes it at the root. */
+  header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    padding: 12px 14px;
+  }
+  header .title,
+  .header-right {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+  .header-right { justify-content: flex-start; }
+  .price-readout { flex-wrap: wrap; gap: 4px 14px; }
+  .price-readout .mid { font-size: 19px; }
+
+  .stat-grid { grid-template-columns: 1fr 1fr; }
+  #stats-grid { grid-template-columns: 1fr 1fr !important; }
+
+  .modal-backdrop { padding: 16px; }
+  .modal { max-height: 85vh; }
+}
+
 .auth-shell {
   min-height: 100vh;
   display: flex;

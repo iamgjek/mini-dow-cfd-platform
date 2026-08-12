@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>小台指模擬交易平台</title>
-<link rel="stylesheet" href="style.css" />
+<link rel="stylesheet" href="style.css?v=2" />
 </head>
 <body>
 <header>
@@ -101,17 +101,21 @@
   <div class="wide-panels">
     <div class="panel">
       <h2>委託單 Orders</h2>
-      <table>
-        <thead><tr><th>時間</th><th>方向</th><th>類型</th><th>口數</th><th>價格</th><th>狀態</th><th></th></tr></thead>
-        <tbody id="orders-body"><tr class="empty-row"><td colspan="7">尚無委託</td></tr></tbody>
-      </table>
+      <div class="admin-table-wrap">
+        <table>
+          <thead><tr><th>時間</th><th>方向</th><th>類型</th><th>口數</th><th>價格</th><th>狀態</th><th></th></tr></thead>
+          <tbody id="orders-body"><tr class="empty-row"><td colspan="7">尚無委託</td></tr></tbody>
+        </table>
+      </div>
     </div>
     <div class="panel">
       <h2>成交紀錄 Trades</h2>
-      <table>
-        <thead><tr><th>時間</th><th>方向</th><th>口數</th><th>成交價</th><th>已實現損益</th><th></th></tr></thead>
-        <tbody id="trades-body"><tr class="empty-row"><td colspan="6">尚無成交</td></tr></tbody>
-      </table>
+      <div class="admin-table-wrap">
+        <table>
+          <thead><tr><th>時間</th><th>方向</th><th>口數</th><th>成交價</th><th>已實現損益</th><th></th></tr></thead>
+          <tbody id="trades-body"><tr class="empty-row"><td colspan="6">尚無成交</td></tr></tbody>
+        </table>
+      </div>
     </div>
   </div>
 </main>
