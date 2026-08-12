@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>小台指模擬交易平台</title>
-<link rel="stylesheet" href="style.css?v=3" />
+<link rel="stylesheet" href="style.css?v=4" />
 </head>
 <body>
 <header>
@@ -111,21 +111,37 @@
 
   <div class="wide-panels">
     <div class="panel">
-      <h2>委託單 Orders</h2>
-      <div class="admin-table-wrap">
-        <table>
-          <thead><tr><th>時間</th><th>方向</th><th>類型</th><th>口數</th><th>價格</th><th>狀態</th><th></th></tr></thead>
-          <tbody id="orders-body"><tr class="empty-row"><td colspan="7">尚無委託</td></tr></tbody>
-        </table>
+      <div class="record-tabs">
+        <button class="record-tab-btn active" data-record-tab="holdings">庫存</button>
+        <button class="record-tab-btn" data-record-tab="orders">委託</button>
+        <button class="record-tab-btn" data-record-tab="history">歷史紀錄</button>
       </div>
-    </div>
-    <div class="panel">
-      <h2>成交紀錄 Trades</h2>
-      <div class="admin-table-wrap">
-        <table>
-          <thead><tr><th>時間</th><th>方向</th><th>口數</th><th>成交價</th><th>已實現損益</th><th></th></tr></thead>
-          <tbody id="trades-body"><tr class="empty-row"><td colspan="6">尚無成交</td></tr></tbody>
-        </table>
+
+      <div class="record-tab-content" id="record-tab-holdings">
+        <div class="admin-table-wrap">
+          <table>
+            <thead><tr><th>時間</th><th>方向</th><th>口數</th><th>成交價</th><th>未實現損益</th><th></th></tr></thead>
+            <tbody id="holdings-body"><tr class="empty-row"><td colspan="6">尚無庫存</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="record-tab-content hidden" id="record-tab-orders">
+        <div class="admin-table-wrap">
+          <table>
+            <thead><tr><th>時間</th><th>方向</th><th>類型</th><th>口數</th><th>價格</th><th>狀態</th><th></th></tr></thead>
+            <tbody id="orders-body"><tr class="empty-row"><td colspan="7">尚無委託</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="record-tab-content hidden" id="record-tab-history">
+        <div class="admin-table-wrap">
+          <table>
+            <thead><tr><th>時間</th><th>方向</th><th>口數</th><th>成交價</th><th>已實現損益</th></tr></thead>
+            <tbody id="history-body"><tr class="empty-row"><td colspan="5">尚無歷史紀錄</td></tr></tbody>
+          </table>
+        </div>
       </div>
     </div>
   </div>
@@ -163,6 +179,6 @@
   </div>
 </div>
 
-<script src="app.js?v=3"></script>
+<script src="app.js?v=4"></script>
 </body>
 </html>

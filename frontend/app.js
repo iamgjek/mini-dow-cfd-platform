@@ -13,6 +13,8 @@
     lastLayout: null,
     positionModalOpen: false,
     modalRecordQty: null,
+    recordTab: "holdings",
+    lastTick: null,
   };
 
   const CANDLE_INTERVAL_SECONDS = 60;
@@ -94,6 +96,7 @@
         if (state.history.length > 20000) state.history.shift(); // keep in sync with backend MAX_TICK_HISTORY
         renderPrice(msg.data);
         drawChart();
+        renderHoldings(); // live unrealized P&L per lot depends on the current price
         break;
       }
       case "account":
@@ -105,7 +108,8 @@
         state.position = msg.data;
         renderPosition();
         renderOrders();
-        renderTrades();
+        renderHoldings();
+        renderHistory();
         drawChart();
         break;
       case "order": {
@@ -120,7 +124,8 @@
       }
       case "trade":
         state.trades.unshift(msg.data);
-        renderTrades();
+        renderHoldings();
+        renderHistory();
         break;
     }
   }
@@ -129,11 +134,13 @@
     renderAccount();
     renderPosition();
     renderOrders();
-    renderTrades();
+    renderHoldings();
+    renderHistory();
     drawChart();
   }
 
   function renderPrice(tick) {
+    state.lastTick = tick;
     $("price-mid").textContent = fmt(tick.mid, 1);
     $("price-bid").textContent = fmt(tick.bid, 1);
     $("price-ask").textContent = fmt(tick.ask, 1);
@@ -277,31 +284,80 @@
     });
   }
 
-  function renderTrades() {
-    const body = $("trades-body");
-    if (!state.trades.length) {
-      body.innerHTML = '<tr class="empty-row"><td colspan="6">尚無成交</td></tr>';
+  // The price to mark an open lot at, matching the backend's own
+  // account_snapshot logic: longs mark at bid (what you'd get selling out),
+  // shorts at ask (what you'd pay to buy back).
+  function markPriceForPosition() {
+    if (!state.lastTick || state.position.qty === 0) return null;
+    return state.position.qty > 0 ? state.lastTick.bid : state.lastTick.ask;
+  }
+
+  // 庫存: the fills that make up the currently open position — same
+  // "editable" cutoff as before, just given its own tab instead of being
+  // mixed into the full trade list. Each row's P&L is unrealized (marked to
+  // the live price), since none of these fills have closed anything yet.
+  function renderHoldings() {
+    const body = $("holdings-body");
+    const cutoff = openPositionCutoff();
+    const holdings = cutoff != null ? state.trades.filter((t) => t.ts >= cutoff) : [];
+    if (!holdings.length) {
+      body.innerHTML = '<tr class="empty-row"><td colspan="6">尚無庫存</td></tr>';
       return;
     }
-    const cutoff = openPositionCutoff();
-    body.innerHTML = state.trades
+    const mark = markPriceForPosition();
+    body.innerHTML = holdings
       .slice(0, 30)
       .map((t) => {
-        const editable = cutoff != null && t.ts >= cutoff;
-        const hint = editable ? '<span class="badge editable">可編輯</span>' : "";
-        const qtyAttr = editable ? ` data-qty="${t.qty}"` : "";
-        return `<tr class="${editable ? "clickable" : ""}"${qtyAttr}>
+        const direction = t.side === "BUY" ? 1 : -1;
+        const upnl = mark != null ? (mark - t.price) * t.qty * direction * state.multiplier : null;
+        const upnlClass = upnl > 0 ? "up" : upnl < 0 ? "down" : "";
+        return `<tr class="clickable" data-qty="${t.qty}">
           <td>${fmtTime(t.ts)}</td>
           <td class="${t.side === "BUY" ? "up" : "down"}">${t.side}</td>
           <td>${t.qty}</td>
           <td>${fmt(t.price, 1)}</td>
-          <td class="${t.realized_pnl > 0 ? "up" : t.realized_pnl < 0 ? "down" : ""}">${fmt(t.realized_pnl)}</td>
-          <td>${hint}</td>
+          <td class="${upnlClass}">${upnl == null ? "--" : fmt(upnl)}</td>
+          <td><span class="badge editable">可編輯</span></td>
         </tr>`;
       })
       .join("");
 
     wireEditableRows(body);
+  }
+
+  // 歷史紀錄: everything before the current position's opened_at cutoff —
+  // already closed out, so realized P&L is meaningful and there's nothing
+  // left to manage (not clickable).
+  function renderHistory() {
+    const body = $("history-body");
+    const cutoff = openPositionCutoff();
+    const history = state.trades.filter((t) => cutoff == null || t.ts < cutoff);
+    if (!history.length) {
+      body.innerHTML = '<tr class="empty-row"><td colspan="5">尚無歷史紀錄</td></tr>';
+      return;
+    }
+    body.innerHTML = history
+      .slice(0, 30)
+      .map(
+        (t) => `<tr>
+          <td>${fmtTime(t.ts)}</td>
+          <td class="${t.side === "BUY" ? "up" : "down"}">${t.side}</td>
+          <td>${t.qty}</td>
+          <td>${fmt(t.price, 1)}</td>
+          <td class="${t.realized_pnl > 0 ? "up" : t.realized_pnl < 0 ? "down" : ""}">${fmt(t.realized_pnl)}</td>
+        </tr>`
+      )
+      .join("");
+  }
+
+  function setRecordTab(tab) {
+    state.recordTab = tab;
+    document.querySelectorAll(".record-tab-btn").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.recordTab === tab);
+    });
+    document.querySelectorAll(".record-tab-content").forEach((el) => {
+      el.classList.toggle("hidden", el.id !== `record-tab-${tab}`);
+    });
   }
 
   function buildCandles(points, intervalSec) {
@@ -609,6 +665,10 @@
   chartCanvas.addEventListener("mouseleave", () => {
     state.hoverIndex = null;
     drawChart();
+  });
+
+  document.querySelectorAll(".record-tab-btn").forEach((btn) => {
+    btn.addEventListener("click", () => setRecordTab(btn.dataset.recordTab));
   });
 
   setSide("BUY");
