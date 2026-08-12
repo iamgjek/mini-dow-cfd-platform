@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>管理後台 · 小台指模擬交易平台</title>
-<link rel="stylesheet" href="style.css?v=2" />
+<link rel="stylesheet" href="style.css?v=3" />
 </head>
 <body>
 <header>
@@ -13,9 +13,17 @@
     <span class="symbol">會員與帳戶管理</span>
   </div>
   <div class="header-right">
-    <div class="header-user" id="header-user"></div>
-    <a class="link-btn" href="/">回交易平台</a>
-    <button class="link-btn" id="logout-btn">登出</button>
+    <div class="user-menu">
+      <button class="avatar-btn" id="avatar-btn" aria-haspopup="true" aria-expanded="false">?</button>
+      <div class="user-dropdown hidden" id="user-dropdown">
+        <div class="user-dropdown-info">
+          <div class="user-dropdown-name" id="user-dropdown-name">--</div>
+          <div class="user-dropdown-email" id="user-dropdown-email">--</div>
+        </div>
+        <a class="user-dropdown-item" href="/">回交易平台</a>
+        <button class="user-dropdown-item" id="logout-btn">登出</button>
+      </div>
+    </div>
   </div>
 </header>
 
@@ -84,6 +92,6 @@
   </div>
 </div>
 
-<script src="admin.js"></script>
+<script src="admin.js?v=3"></script>
 </body>
 </html>

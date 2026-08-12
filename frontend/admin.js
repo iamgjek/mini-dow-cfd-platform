@@ -27,7 +27,9 @@
       return null;
     }
     currentAdminId = user.id;
-    $("header-user").innerHTML = `<strong>${user.display_name}</strong> · 管理員`;
+    $("avatar-btn").textContent = (user.display_name || user.email || "?").trim().charAt(0).toUpperCase();
+    $("user-dropdown-name").textContent = `${user.display_name} · 管理員`;
+    $("user-dropdown-email").textContent = user.email;
     return user;
   }
 
@@ -182,6 +184,20 @@
   });
   $("adjust-submit").addEventListener("click", submitAdjustment);
   $("settings-save").addEventListener("click", saveSettings);
+  $("avatar-btn").addEventListener("click", (e) => {
+    e.stopPropagation();
+    const dropdown = $("user-dropdown");
+    const willShow = dropdown.classList.contains("hidden");
+    dropdown.classList.toggle("hidden", !willShow);
+    $("avatar-btn").setAttribute("aria-expanded", String(willShow));
+  });
+  document.addEventListener("click", (e) => {
+    const menu = document.querySelector(".user-menu");
+    if (menu && !menu.contains(e.target)) {
+      $("user-dropdown").classList.add("hidden");
+      $("avatar-btn").setAttribute("aria-expanded", "false");
+    }
+  });
   $("logout-btn").addEventListener("click", async () => {
     await fetch("/api/auth/logout", { method: "POST" });
     window.location.href = "/login.html";

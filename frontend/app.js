@@ -28,10 +28,27 @@
       return null;
     }
     const user = await res.json();
-    $("header-user").innerHTML = `<strong>${user.display_name}</strong> · ${user.email}`;
+    $("avatar-btn").textContent = (user.display_name || user.email || "?").trim().charAt(0).toUpperCase();
+    $("user-dropdown-name").textContent = user.display_name;
+    $("user-dropdown-email").textContent = user.email;
     $("admin-link").classList.toggle("hidden", user.role !== "admin");
     return user;
   }
+
+  $("avatar-btn").addEventListener("click", (e) => {
+    e.stopPropagation();
+    const dropdown = $("user-dropdown");
+    const willShow = dropdown.classList.contains("hidden");
+    dropdown.classList.toggle("hidden", !willShow);
+    $("avatar-btn").setAttribute("aria-expanded", String(willShow));
+  });
+  document.addEventListener("click", (e) => {
+    const menu = document.querySelector(".user-menu");
+    if (menu && !menu.contains(e.target)) {
+      $("user-dropdown").classList.add("hidden");
+      $("avatar-btn").setAttribute("aria-expanded", "false");
+    }
+  });
 
   $("logout-btn").addEventListener("click", async () => {
     await fetch("/api/auth/logout", { method: "POST" });
