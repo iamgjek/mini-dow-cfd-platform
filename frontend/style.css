@@ -28,6 +28,9 @@ header {
   padding: 14px 20px;
   border-bottom: 1px solid var(--border);
   background: var(--panel);
+  position: sticky;
+  top: 0;
+  z-index: 5;
 }
 
 header .title { display: flex; align-items: baseline; gap: 10px; }
@@ -211,6 +214,13 @@ th { color: var(--muted); font-weight: 500; }
 @media (max-width: 900px) {
   main { grid-template-columns: 1fr; }
   .wide-panels { grid-template-columns: 1fr; }
+  /* Single-column layout would otherwise stack in source order — chart
+     first, order ticket last — pushing the actual trading controls off the
+     first screen. Reorder so the account/order-ticket/position column
+     comes first; the chart (and its own toolbar) can be scrolled to. */
+  #chart-panel { order: 2; }
+  .sidebar { order: 1; }
+  .wide-panels { order: 3; }
 }
 
 @media (max-width: 640px) {
