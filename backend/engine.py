@@ -159,6 +159,17 @@ class TradingEngine:
         return abs(prospective_qty) * price * config.CONTRACT_MULTIPLIER * config.MARGIN_RATE
 
     def _try_fill(self, order: Order, price: float) -> None:
+        # The live feed initializes bid/ask/mid at 0.0 until its first real
+        # quote arrives; filling here before then would silently corrupt the
+        # position's avg_price to 0 (and, for a closing fill, misprice the
+        # realized P&L) rather than actually trading at a real price.
+        if price <= 0:
+            order.status = OrderStatus.REJECTED
+            order.reject_reason = "quote not ready"
+            db.update_order(order.id, status=order.status.value, reject_reason=order.reject_reason)
+            self._emit("order", order)
+            return
+
         signed_qty = order.qty if order.side == Side.BUY else -order.qty
         prospective_qty = self.position.qty + signed_qty
 

@@ -628,10 +628,14 @@
     const values = isCandle ? candles.flatMap((c) => [c.h, c.l]) : linePoints.map((p) => p.price);
     maSeries.forEach((s) => s.values.forEach((v) => { if (v != null) values.push(v); }));
     if (sessionBlock.prevClose != null) values.push(sessionBlock.prevClose);
-    if (state.position.qty !== 0) {
+    // avg_price of 0 is never a real index price — a position stuck in that
+    // state (e.g. a fill that slipped through before the feed had a real
+    // quote) shouldn't be able to blow the whole axis out to zero.
+    const hasValidPosition = state.position.qty !== 0 && state.position.avg_price > 0;
+    if (hasValidPosition) {
       values.push(state.position.avg_price);
-      if (state.position.stop_loss != null) values.push(state.position.stop_loss);
-      if (state.position.take_profit != null) values.push(state.position.take_profit);
+      if (state.position.stop_loss != null && state.position.stop_loss > 0) values.push(state.position.stop_loss);
+      if (state.position.take_profit != null && state.position.take_profit > 0) values.push(state.position.take_profit);
     }
     const min = Math.min(...values), max = Math.max(...values);
     const pad = (max - min) * 0.12 || 1;
@@ -716,9 +720,9 @@
     drawOverlayLine(ctx, plotW, y, lo, hi, sessionBlock.prevClose, "#8b96a5", `昨收 ${fmt(sessionBlock.prevClose, 1)}`, sessionBlock.prevClose != null);
 
     const pos = state.position;
-    drawOverlayLine(ctx, plotW, y, lo, hi, pos.avg_price, "#4f8cff", `均 ${fmt(pos.avg_price, 1)}`, pos.qty !== 0);
-    drawOverlayLine(ctx, plotW, y, lo, hi, pos.stop_loss, "#ff5c5c", `SL ${fmt(pos.stop_loss, 1)}`, pos.qty !== 0 && pos.stop_loss != null);
-    drawOverlayLine(ctx, plotW, y, lo, hi, pos.take_profit, "#3ddc84", `TP ${fmt(pos.take_profit, 1)}`, pos.qty !== 0 && pos.take_profit != null);
+    drawOverlayLine(ctx, plotW, y, lo, hi, pos.avg_price, "#4f8cff", `均 ${fmt(pos.avg_price, 1)}`, hasValidPosition);
+    drawOverlayLine(ctx, plotW, y, lo, hi, pos.stop_loss, "#ff5c5c", `SL ${fmt(pos.stop_loss, 1)}`, hasValidPosition && pos.stop_loss != null && pos.stop_loss > 0);
+    drawOverlayLine(ctx, plotW, y, lo, hi, pos.take_profit, "#3ddc84", `TP ${fmt(pos.take_profit, 1)}`, hasValidPosition && pos.take_profit != null && pos.take_profit > 0);
 
     if (state.hoverIndex !== null && state.hoverIndex < n) {
       const i = state.hoverIndex;
