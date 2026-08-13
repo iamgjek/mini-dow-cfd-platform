@@ -128,8 +128,8 @@ main {
 }
 .chart-mode-btn.active, .chart-session-btn.active { background: #17233a; color: var(--accent); border-color: var(--accent); }
 
-#chart-range-group.hidden, #chart-interval-group.hidden { display: none; }
-.chart-range-btn, .chart-interval-btn {
+#chart-range-group.hidden, #chart-interval-group.hidden, #chart-candle-range-group.hidden { display: none; }
+.chart-range-btn, .chart-interval-btn, .chart-candle-range-btn {
   padding: 4px 9px;
   font-size: 11px;
   border-radius: 5px;
@@ -138,7 +138,7 @@ main {
   color: var(--muted);
   cursor: pointer;
 }
-.chart-range-btn.active, .chart-interval-btn.active { background: var(--panel-alt); color: var(--text); border-color: #3a4356; }
+.chart-range-btn.active, .chart-interval-btn.active, .chart-candle-range-btn.active { background: var(--panel-alt); color: var(--text); border-color: #3a4356; }
 
 .chart-legend { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 

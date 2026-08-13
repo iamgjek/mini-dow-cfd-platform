@@ -10,7 +10,13 @@
     chartMode: "line",
     lineRangeSeconds: 15 * 60,
     candleIntervalSeconds: 60,
+    // 0 means "show the whole session" (no lookback filter applied).
+    candleRangeSeconds: 0,
     hoverIndex: null,
+    // Set by clicking/tapping a point on the chart; overrides hoverIndex so
+    // the crosshair/tooltip stays put after the mouse leaves or a touch
+    // ends (touch devices have no hover state to fall back on).
+    pinnedIndex: null,
     lastLayout: null,
     positionModalOpen: false,
     modalRecordQty: null,
@@ -628,7 +634,11 @@
     // cut by actual timestamp rather than array-index count.
     const lastTs = sessionPoints.length ? sessionPoints[sessionPoints.length - 1].ts : null;
     const linePoints = lastTs === null ? [] : sessionPoints.filter((p) => p.ts >= lastTs - state.lineRangeSeconds);
-    const candles = isCandle ? buildCandles(sessionPoints, state.candleIntervalSeconds) : null;
+    const candleSourcePoints =
+      state.candleRangeSeconds > 0 && lastTs !== null
+        ? sessionPoints.filter((p) => p.ts >= lastTs - state.candleRangeSeconds)
+        : sessionPoints;
+    const candles = isCandle ? buildCandles(candleSourcePoints, state.candleIntervalSeconds) : null;
 
     // The most recent bar's time window may not have closed yet — flag it so
     // it isn't mistaken for a settled candle.
@@ -710,11 +720,21 @@
     }
 
     // Evenly spaced in *time*, not in point index, so the printed clock
-    // times are actually evenly spaced left-to-right.
+    // times are actually evenly spaced left-to-right. Each label gets a
+    // matching vertical gridline (drawn before candles/line so it sits
+    // underneath them), mirroring the horizontal Y-axis gridlines above.
     const labelCount = Math.min(5, n);
     for (let k = 0; k < labelCount; k++) {
       const t = tStart + (tSpan * k) / (labelCount - 1 || 1);
       const xx = xOfTime(t);
+      ctx.strokeStyle = "#2a3140";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(xx, marginTop);
+      ctx.lineTo(xx, marginTop + plotH);
+      ctx.stroke();
+      ctx.fillStyle = "#8b96a5";
+      ctx.font = "11px sans-serif";
       ctx.fillText(fmtClock(t), Math.min(Math.max(xx - 18, 0), plotW - 34), h - 4);
     }
 
@@ -780,8 +800,9 @@
     drawOverlayLine(ctx, plotW, y, lo, hi, pos.stop_loss, "#ff5c5c", `SL ${fmt(pos.stop_loss, 1)}`, hasValidPosition && pos.stop_loss != null && pos.stop_loss > 0);
     drawOverlayLine(ctx, plotW, y, lo, hi, pos.take_profit, "#3ddc84", `TP ${fmt(pos.take_profit, 1)}`, hasValidPosition && pos.take_profit != null && pos.take_profit > 0);
 
-    if (state.hoverIndex !== null && state.hoverIndex < n) {
-      const i = state.hoverIndex;
+    const activeIndex = state.pinnedIndex !== null ? state.pinnedIndex : state.hoverIndex;
+    if (activeIndex !== null && activeIndex < n) {
+      const i = activeIndex;
       const point = isCandle ? candles[i] : linePoints[i];
       const v = isCandle ? point.c : point.price;
       const xx = x(i), yy = y(v);
@@ -908,6 +929,7 @@
       document.querySelectorAll(".chart-mode-btn").forEach((b) => b.classList.toggle("active", b === btn));
       $("chart-range-group").classList.toggle("hidden", state.chartMode !== "line");
       $("chart-interval-group").classList.toggle("hidden", state.chartMode !== "candle");
+      $("chart-candle-range-group").classList.toggle("hidden", state.chartMode !== "candle");
       drawChart();
     });
   });
@@ -916,6 +938,14 @@
     btn.addEventListener("click", () => {
       state.candleIntervalSeconds = Number(btn.dataset.interval) * 60;
       document.querySelectorAll(".chart-interval-btn").forEach((b) => b.classList.toggle("active", b === btn));
+      drawChart();
+    });
+  });
+
+  document.querySelectorAll(".chart-candle-range-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.candleRangeSeconds = Number(btn.dataset.candleRange) * 60;
+      document.querySelectorAll(".chart-candle-range-btn").forEach((b) => b.classList.toggle("active", b === btn));
       drawChart();
     });
   });
@@ -939,18 +969,54 @@
   document.querySelector(`.chart-range-btn[data-range="15"]`).classList.add("active");
 
   const chartCanvas = $("chart");
-  chartCanvas.addEventListener("mousemove", (e) => {
-    if (!state.lastLayout) return;
+  // Shared by mouse hover, click-to-pin, and touch: maps a viewport x
+  // coordinate to the nearest plotted point's index.
+  function indexFromClientX(clientX) {
     const rect = chartCanvas.getBoundingClientRect();
-    const mx = e.clientX - rect.left;
+    const mx = clientX - rect.left;
     const { plotW, tStart, tSpan, ts } = state.lastLayout;
     const frac = Math.min(Math.max(mx / plotW, 0), 1);
-    state.hoverIndex = findNearestIndexByTime(ts, tStart + frac * tSpan);
+    return findNearestIndexByTime(ts, tStart + frac * tSpan);
+  }
+
+  chartCanvas.addEventListener("mousemove", (e) => {
+    // A pinned point (from a click) freezes the crosshair/tooltip until the
+    // user unpins it — plain hover shouldn't fight with that.
+    if (!state.lastLayout || state.pinnedIndex !== null) return;
+    state.hoverIndex = indexFromClientX(e.clientX);
     drawChart();
   });
   chartCanvas.addEventListener("mouseleave", () => {
+    if (state.pinnedIndex !== null) return;
     state.hoverIndex = null;
     drawChart();
+  });
+  chartCanvas.addEventListener("click", (e) => {
+    if (!state.lastLayout) return;
+    const idx = indexFromClientX(e.clientX);
+    // Clicking the already-pinned point unpins it; clicking elsewhere on
+    // the chart moves the pin there.
+    state.pinnedIndex = state.pinnedIndex === idx ? null : idx;
+    drawChart();
+  });
+  // Touch devices have no hover state, so a touch pins the tooltip directly
+  // (rather than mirroring mousemove's live-preview-then-clear behavior) —
+  // it stays visible after the finger lifts, same as a click.
+  const handleChartTouch = (e) => {
+    if (!state.lastLayout) return;
+    const touch = e.touches[0];
+    if (!touch) return;
+    state.pinnedIndex = indexFromClientX(touch.clientX);
+    drawChart();
+    e.preventDefault();
+  };
+  chartCanvas.addEventListener("touchstart", handleChartTouch, { passive: false });
+  chartCanvas.addEventListener("touchmove", handleChartTouch, { passive: false });
+  document.addEventListener("click", (e) => {
+    if (state.pinnedIndex !== null && !chartCanvas.contains(e.target)) {
+      state.pinnedIndex = null;
+      drawChart();
+    }
   });
 
   document.querySelectorAll(".record-tab-btn").forEach((btn) => {
