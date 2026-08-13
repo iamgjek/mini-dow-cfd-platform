@@ -70,7 +70,7 @@ async def lifespan(app: FastAPI):
     task.cancel()
 
 
-app = FastAPI(title="Mini TAIEX (小台指) Paper Trading Platform", lifespan=lifespan)
+app = FastAPI(title="Micro TAIEX (微小台指) Paper Trading Platform", lifespan=lifespan)
 
 
 def user_to_dict(row: dict) -> dict:

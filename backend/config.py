@@ -1,4 +1,4 @@
-"""小台指 (Mini TAIEX Futures) instrument + live quote feed configuration.
+"""微小台指 (Micro TAIEX Futures) instrument + live quote feed configuration.
 
 Price data comes from a real-time TCP quote feed (see backend/price_engine.py)
 for a genuine market instrument — unlike the earlier Mini Dow CFD version of
@@ -17,10 +17,15 @@ TF_MARKET = os.environ.get("TF_MARKET", "TF")
 TF_USERNAME = os.environ.get("TF_USERNAME", "")
 TF_PASSWORD = os.environ.get("TF_PASSWORD", "")
 
-# Which symbol on the feed to trade. TFFIMTX8 = 小台指 (Mini TAIEX futures,
-# current month, auto-rolling). Other codes seen on this feed include
-# TFFITX1 (大台指/standard TAIEX futures) and TFFITM1 (微台指/Micro TAIEX).
-TF_SYMBOL = os.environ.get("TF_SYMBOL", "TFFIMTX8")
+# Which symbol on the feed to trade. TFFITMQ+ = 微小台指 (Micro TAIEX
+# futures, 2026-08 contract). This is a fixed-month code, not the
+# auto-rolling "當月" one (that would be TFFITM1) — it stops updating once
+# this contract expires and TF_SYMBOL needs to be bumped to the next
+# month's code by hand. Other codes seen on this feed include TFFITX1
+# (大台指/standard TAIEX futures) and TFFIMTX8 (小台指/Mini TAIEX, current
+# month, auto-rolling — what this app used before switching to the micro
+# contract).
+TF_SYMBOL = os.environ.get("TF_SYMBOL", "TFFITMQ+")
 
 TF_HEARTBEAT_SECONDS = 120
 MAX_TICK_HISTORY = 20_000
@@ -28,11 +33,11 @@ MAX_TICK_HISTORY = 20_000
 # --- simulated trading/account parameters -------------------------------------
 
 INSTRUMENT_SYMBOL = TF_SYMBOL
-INSTRUMENT_NAME = "小台指 (當月)"
+INSTRUMENT_NAME = "微小台指"
 TICK_SIZE = 1.0
 
-# Real contract spec: Mini TAIEX futures (小型臺股期貨) point value is NT$50.
-CONTRACT_MULTIPLIER = 50.0
+# Real contract spec: Micro TAIEX futures (微型臺股期貨) point value is NT$10.
+CONTRACT_MULTIPLIER = 10.0
 
 # Simplified illustrative margin model (percent of notional), not the real
 # exchange's fixed-NT$ original-margin table.
