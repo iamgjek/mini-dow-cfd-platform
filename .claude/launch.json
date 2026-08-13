@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "backend",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "cd /Users/ianchiu/Repo/mini-dow-cfd-platform && set -a && source .env && set +a && .venv/bin/uvicorn backend.main:app --host 0.0.0.0 --port 8008"],
+      "port": 8008
+    }
+  ]
+}
