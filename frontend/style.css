@@ -9,6 +9,11 @@
   --up: #3ddc84;
   --down: #ff5c5c;
   --accent: #4f8cff;
+  /* Price-direction colors only, kept separate from --up/--down (which stay
+     literal green/red for unrelated "good/bad" UI like connection status and
+     error text) — Taiwan market convention is reversed: red = 漲, green = 跌. */
+  --price-up: #ff5c5c;
+  --price-down: #3ddc84;
 }
 
 * { box-sizing: border-box; }
@@ -47,7 +52,11 @@ header .symbol { color: var(--muted); font-size: 13px; }
 }
 
 .price-readout { display: flex; gap: 12px; align-items: center; }
+.price-readout .mid-row { display: flex; align-items: baseline; gap: 8px; }
 .price-readout .mid { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.price-readout .chg { font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--muted); white-space: nowrap; }
+.price-readout .chg.up { color: var(--price-up); }
+.price-readout .chg.down { color: var(--price-down); }
 .price-readout .ba { display: flex; gap: 6px; }
 
 .ba-item {
@@ -62,8 +71,8 @@ header .symbol { color: var(--muted); font-size: 13px; }
   font-variant-numeric: tabular-nums;
 }
 .ba-item .ba-label { font-size: 9px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; opacity: 0.8; }
-.ba-item.bid { background: rgba(61, 220, 132, 0.14); color: var(--up); }
-.ba-item.ask { background: rgba(255, 92, 92, 0.14); color: var(--down); }
+.ba-item.bid { background: rgba(255, 92, 92, 0.14); color: var(--price-up); }
+.ba-item.ask { background: rgba(61, 220, 132, 0.14); color: var(--price-down); }
 
 .status-dot {
   width: 8px; height: 8px; border-radius: 50%;
@@ -108,7 +117,7 @@ main {
   padding: 2px 4px 8px;
 }
 .chart-modes { display: flex; gap: 6px; }
-.chart-mode-btn {
+.chart-mode-btn, .chart-session-btn {
   padding: 5px 10px;
   font-size: 12px;
   border-radius: 6px;
@@ -117,10 +126,10 @@ main {
   color: var(--muted);
   cursor: pointer;
 }
-.chart-mode-btn.active { background: #17233a; color: var(--accent); border-color: var(--accent); }
+.chart-mode-btn.active, .chart-session-btn.active { background: #17233a; color: var(--accent); border-color: var(--accent); }
 
-#chart-range-group.hidden { display: none; }
-.chart-range-btn {
+#chart-range-group.hidden, #chart-interval-group.hidden { display: none; }
+.chart-range-btn, .chart-interval-btn {
   padding: 4px 9px;
   font-size: 11px;
   border-radius: 5px;
@@ -129,7 +138,7 @@ main {
   color: var(--muted);
   cursor: pointer;
 }
-.chart-range-btn.active { background: var(--panel-alt); color: var(--text); border-color: #3a4356; }
+.chart-range-btn.active, .chart-interval-btn.active { background: var(--panel-alt); color: var(--text); border-color: #3a4356; }
 
 .chart-legend { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 
@@ -161,8 +170,8 @@ canvas#chart { width: 100%; height: 340px; display: block; cursor: crosshair; }
 .stat-grid .label { color: var(--muted); font-size: 12px; }
 .stat-grid .value { font-variant-numeric: tabular-nums; font-weight: 600; text-align: right; }
 
-.up { color: var(--up); }
-.down { color: var(--down); }
+.up { color: var(--price-up); }
+.down { color: var(--price-down); }
 
 .tabs { display: flex; gap: 6px; margin-bottom: 10px; }
 .tab-btn {
@@ -175,8 +184,8 @@ canvas#chart { width: 100%; height: 340px; display: block; cursor: crosshair; }
   cursor: pointer;
   font-weight: 600;
 }
-.tab-btn.active.buy { background: #123a26; color: var(--up); border-color: #1f5c3c; }
-.tab-btn.active.sell { background: #3a1616; color: var(--down); border-color: #5c1f1f; }
+.tab-btn.active.buy { background: #3a1616; color: var(--price-up); border-color: #5c1f1f; }
+.tab-btn.active.sell { background: #123a26; color: var(--price-down); border-color: #1f5c3c; }
 
 .field { margin-bottom: 10px; }
 .field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
@@ -201,8 +210,8 @@ button.submit {
   cursor: pointer;
   font-size: 14px;
 }
-button.submit.buy { background: var(--up); color: #06210f; }
-button.submit.sell { background: var(--down); color: #2c0505; }
+button.submit.buy { background: var(--price-up); color: #2c0505; }
+button.submit.sell { background: var(--price-down); color: #06210f; }
 button.submit:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .hidden { display: none !important; }

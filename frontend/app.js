@@ -9,19 +9,109 @@
     multiplier: 5,
     chartMode: "line",
     lineRangeSeconds: 15 * 60,
+    candleIntervalSeconds: 60,
     hoverIndex: null,
     lastLayout: null,
     positionModalOpen: false,
     modalRecordQty: null,
     recordTab: "holdings",
     lastTick: null,
+    // 台指期日盤/夜盤: which session the chart is currently showing.
+    // Auto-follows the live session until the user manually picks one.
+    session: "day",
+    sessionManual: false,
   };
 
-  const CANDLE_INTERVAL_SECONDS = 60;
+  // Taiwan market convention is the reverse of the US one used elsewhere in
+  // web dev: red = 漲 (up), green = 跌 (down).
+  const COLOR_UP = "#ff5c5c";
+  const COLOR_DOWN = "#3ddc84";
 
   const $ = (id) => document.getElementById(id);
   const fmt = (n, d = 2) => (n === null || n === undefined ? "--" : Number(n).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d }));
   const fmtTime = (ts) => new Date(ts * 1000).toLocaleTimeString();
+
+  // --- 台指期日盤/夜盤 session classification -----------------------------
+  // Day session: 08:45–13:45 Taipei time. Night session: 15:00–next 05:00
+  // (crosses midnight, so its "trading day" is keyed off the evening it
+  // started). Everything else is market-closed and shouldn't appear in the
+  // feed at all, but is handled defensively.
+  const taipeiFormatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Taipei",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+
+  function taipeiDateKey(ts) {
+    const parts = taipeiFormatter.formatToParts(new Date(ts * 1000));
+    const get = (t) => parts.find((p) => p.type === t).value;
+    return `${get("year")}-${get("month")}-${get("day")}`;
+  }
+
+  function taipeiClassify(ts) {
+    const parts = taipeiFormatter.formatToParts(new Date(ts * 1000));
+    const get = (t) => parts.find((p) => p.type === t).value;
+    const dateKey = `${get("year")}-${get("month")}-${get("day")}`;
+    const minutesOfDay = (Number(get("hour")) % 24) * 60 + Number(get("minute"));
+    if (minutesOfDay >= 525 && minutesOfDay < 825) return { session: "day", blockKey: `day-${dateKey}` };
+    if (minutesOfDay >= 900) return { session: "night", blockKey: `night-${dateKey}` };
+    if (minutesOfDay < 300) return { session: "night", blockKey: `night-${taipeiDateKey(ts - 12 * 3600)}` };
+    return { session: "closed", blockKey: null };
+  }
+
+  function sessionLabelText(blockKey, sessionType) {
+    if (!blockKey) return sessionType === "night" ? "夜盤" : "日盤";
+    const [, m, d] = blockKey.slice(blockKey.indexOf("-") + 1).split("-");
+    return sessionType === "night" ? `夜盤 ${m}/${d} 15:00起` : `日盤 ${m}/${d}`;
+  }
+
+  // Matches the button labels in #chart-range-group / #chart-interval-group
+  // (…30分, 1小時) so the legend reads the same way the control does.
+  function minutesLabel(sec) {
+    const m = sec / 60;
+    return m === 60 ? "1小時" : `${m}分`;
+  }
+
+  // Points carry a cached {session, blockKey} (set once when they enter
+  // state.history) so scanning the history for a session's boundaries is
+  // plain property comparison, not a fresh Intl call per point per redraw.
+  function findSessionBlock(historyArr, sessionType) {
+    let blockKey = null, endIdx = -1;
+    for (let i = historyArr.length - 1; i >= 0; i--) {
+      if (historyArr[i].session === sessionType) {
+        blockKey = historyArr[i].blockKey;
+        endIdx = i;
+        break;
+      }
+    }
+    if (blockKey === null) return { points: [], prevClose: null, blockKey: null };
+
+    let startIdx = endIdx;
+    for (let i = endIdx; i >= 0; i--) {
+      if (historyArr[i].session !== sessionType || historyArr[i].blockKey !== blockKey) break;
+      startIdx = i;
+    }
+
+    let prevClose = null;
+    for (let i = startIdx - 1; i >= 0; i--) {
+      if (historyArr[i].session === sessionType && historyArr[i].blockKey !== blockKey) {
+        prevClose = historyArr[i].price;
+        break;
+      }
+    }
+
+    return { points: historyArr.slice(startIdx, endIdx + 1), prevClose, blockKey };
+  }
+
+  function syncSessionButtons() {
+    document.querySelectorAll(".chart-session-btn").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.session === state.session);
+    });
+  }
 
   async function bootstrapAuth() {
     const res = await fetch("/api/auth/me");
@@ -82,8 +172,12 @@
         $("instrument-symbol").textContent = d.instrument.symbol;
         state.multiplier = d.instrument.multiplier;
         setSide(state.side);
+        state.history = d.history.map((p) => Object.assign({}, p, taipeiClassify(p.ts)));
+        state.session = state.history.length ? state.history[state.history.length - 1].session : "day";
+        if (state.session === "closed") state.session = "day";
+        state.sessionManual = false;
+        syncSessionButtons();
         if (d.tick && d.tick.mid) renderPrice(d.tick);
-        state.history = d.history;
         state.account = d.account;
         state.position = d.position;
         state.orders = d.orders;
@@ -92,8 +186,13 @@
         break;
       }
       case "tick": {
-        state.history.push({ ts: msg.data.ts, price: msg.data.mid });
+        const info = taipeiClassify(msg.data.ts);
+        state.history.push({ ts: msg.data.ts, price: msg.data.mid, session: info.session, blockKey: info.blockKey });
         if (state.history.length > 20000) state.history.shift(); // keep in sync with backend MAX_TICK_HISTORY
+        if (!state.sessionManual && info.session !== "closed" && info.session !== state.session) {
+          state.session = info.session;
+          syncSessionButtons();
+        }
         renderPrice(msg.data);
         drawChart();
         renderHoldings(); // live unrealized P&L per lot depends on the current price
@@ -144,6 +243,21 @@
     $("price-mid").textContent = fmt(tick.mid, 1);
     $("price-bid").textContent = fmt(tick.bid, 1);
     $("price-ask").textContent = fmt(tick.ask, 1);
+
+    const chgEl = $("price-chg");
+    const info = taipeiClassify(tick.ts);
+    const prevClose = info.session === "closed" ? null : findSessionBlock(state.history, info.session).prevClose;
+    if (prevClose == null) {
+      chgEl.textContent = "--";
+      chgEl.className = "chg";
+      return;
+    }
+    const delta = tick.mid - prevClose;
+    const pct = (delta / prevClose) * 100;
+    const dir = delta > 0 ? "up" : delta < 0 ? "down" : "";
+    const arrow = delta > 0 ? "▲" : delta < 0 ? "▼" : "";
+    chgEl.textContent = `${arrow} ${fmt(Math.abs(delta), 1)} (${delta >= 0 ? "+" : "-"}${fmt(Math.abs(pct), 2)}%)`;
+    chgEl.className = "chg " + dir;
   }
 
   function renderAccount() {
@@ -360,6 +474,49 @@
     });
   }
 
+  // MA5/10/20 are the conventional trio on a candlestick chart; colors are
+  // picked to stay legible against both the red/green candles and the blue
+  // avg-price / gray 昨收 overlay lines.
+  const MA_STYLES = [
+    { period: 5, color: "#f2c94c" },
+    { period: 10, color: "#bb86fc" },
+    { period: 20, color: "#64d8ff" },
+  ];
+
+  function sma(values, period) {
+    const out = new Array(values.length).fill(null);
+    let sum = 0;
+    for (let i = 0; i < values.length; i++) {
+      sum += values[i];
+      if (i >= period) sum -= values[i - period];
+      if (i >= period - 1) out[i] = sum / period;
+    }
+    return out;
+  }
+
+  // Values with `null` gaps (the MA warmup period) break the line rather
+  // than drawing a misleading segment down to zero.
+  function drawSeriesLine(ctx, xFn, yFn, values, color) {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.25;
+    ctx.beginPath();
+    let started = false;
+    values.forEach((v, i) => {
+      if (v == null) {
+        started = false;
+        return;
+      }
+      const px = xFn(i), py = yFn(v);
+      if (!started) {
+        ctx.moveTo(px, py);
+        started = true;
+      } else {
+        ctx.lineTo(px, py);
+      }
+    });
+    ctx.stroke();
+  }
+
   function buildCandles(points, intervalSec) {
     const bins = new Map();
     for (const p of points) {
@@ -421,22 +578,56 @@
     ctx.clearRect(0, 0, w, h);
 
     const isCandle = state.chartMode === "candle";
+    // Chart only ever shows one 日盤/夜盤 block at a time — the two sessions
+    // are separated by multi-hour closed gaps, so connecting across them
+    // (or letting a 2h candle lookback bleed into the prior session) would
+    // draw a misleading line/reference set.
+    const sessionBlock = findSessionBlock(state.history, state.session);
+    const sessionPoints = sessionBlock.points;
+
     // Real quotes don't arrive on a steady 1-tick/sec cadence, so windows are
     // cut by actual timestamp rather than array-index count.
-    const lastTs = state.history.length ? state.history[state.history.length - 1].ts : Date.now() / 1000;
-    const linePoints = state.history.filter((p) => p.ts >= lastTs - state.lineRangeSeconds);
-    const candles = isCandle
-      ? buildCandles(state.history.filter((p) => p.ts >= lastTs - 2 * 60 * 60), CANDLE_INTERVAL_SECONDS)
-      : null;
+    const lastTs = sessionPoints.length ? sessionPoints[sessionPoints.length - 1].ts : null;
+    const linePoints = lastTs === null ? [] : sessionPoints.filter((p) => p.ts >= lastTs - state.lineRangeSeconds);
+    const candles = isCandle ? buildCandles(sessionPoints, state.candleIntervalSeconds) : null;
+
+    // The most recent bar's time window may not have closed yet — flag it so
+    // it isn't mistaken for a settled candle.
+    const nowSec = Date.now() / 1000;
+    const lastCandleLive =
+      isCandle && candles.length > 0 && nowSec < candles[candles.length - 1].t + state.candleIntervalSeconds;
+
+    const legendBits = [sessionLabelText(sessionBlock.blockKey, state.session)];
+    if (isCandle) legendBits.push(`每根蠟燭 = ${minutesLabel(state.candleIntervalSeconds)}`);
+    if (lastCandleLive) legendBits.push("最新K棒尚未收盤");
+    $("chart-legend").innerHTML =
+      legendBits.join(" · ") +
+      (isCandle ? MA_STYLES.map((s) => ` <span style="color:${s.color};">● MA${s.period}</span>`).join("") : "");
+
     const plotData = isCandle ? candles : linePoints;
-    if (!plotData || plotData.length < 2) return;
+    if (!plotData || plotData.length < 2) {
+      $("chart-tooltip").classList.add("hidden");
+      state.lastLayout = null;
+      ctx.fillStyle = "#8b96a5";
+      ctx.font = "13px sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText(`尚無${state.session === "night" ? "夜盤" : "日盤"}資料`, w / 2, h / 2);
+      ctx.textAlign = "left";
+      return;
+    }
 
     const marginRight = 52, marginBottom = 22, marginTop = 6;
     const plotW = w - marginRight, plotH = h - marginBottom - marginTop;
     const n = plotData.length;
     state.lastLayout = { n, plotW, isCandle };
 
+    const maSeries = isCandle
+      ? MA_STYLES.map((s) => ({ color: s.color, values: sma(candles.map((c) => c.c), s.period) }))
+      : [];
+
     const values = isCandle ? candles.flatMap((c) => [c.h, c.l]) : linePoints.map((p) => p.price);
+    maSeries.forEach((s) => s.values.forEach((v) => { if (v != null) values.push(v); }));
+    if (sessionBlock.prevClose != null) values.push(sessionBlock.prevClose);
     if (state.position.qty !== 0) {
       values.push(state.position.avg_price);
       if (state.position.stop_loss != null) values.push(state.position.stop_loss);
@@ -472,23 +663,40 @@
     }
 
     if (isCandle) {
-      const candleW = Math.max(2, Math.min(10, (plotW / n) * 0.6));
+      const candleW = Math.max(1, Math.min(12, (plotW / n) * 0.7));
+      const wickWidth = Math.max(1, Math.min(1.6, candleW * 0.14));
       candles.forEach((c, i) => {
-        const xx = x(i);
+        const xx = Math.round(x(i));
         const up = c.c >= c.o;
-        ctx.strokeStyle = up ? "#3ddc84" : "#ff5c5c";
-        ctx.fillStyle = up ? "#3ddc84" : "#ff5c5c";
+        const color = up ? COLOR_UP : COLOR_DOWN;
+        const isLive = lastCandleLive && i === candles.length - 1;
+        ctx.strokeStyle = color;
+        ctx.fillStyle = isLive ? color + "66" : color;
+        ctx.lineWidth = wickWidth;
+        ctx.setLineDash(isLive ? [2, 2] : []);
         ctx.beginPath();
         ctx.moveTo(xx, y(c.h));
         ctx.lineTo(xx, y(c.l));
         ctx.stroke();
-        const bodyTop = y(Math.max(c.o, c.c));
-        const bodyBottom = y(Math.min(c.o, c.c));
-        ctx.fillRect(xx - candleW / 2, bodyTop, candleW, Math.max(1, bodyBottom - bodyTop));
+        const bodyTop = Math.round(y(Math.max(c.o, c.c)));
+        const bodyBottom = Math.round(y(Math.min(c.o, c.c)));
+        const bodyH = Math.max(1.5, bodyBottom - bodyTop);
+        ctx.fillRect(xx - candleW / 2, bodyTop, candleW, bodyH);
+        if (isLive) {
+          ctx.strokeStyle = color;
+          ctx.lineWidth = 1;
+          ctx.strokeRect(xx - candleW / 2, bodyTop, candleW, bodyH);
+        }
+        ctx.setLineDash([]);
       });
+      maSeries.forEach((s) => drawSeriesLine(ctx, x, y, s.values, s.color));
     } else {
-      const rising = linePoints[linePoints.length - 1].price >= linePoints[0].price;
-      ctx.strokeStyle = rising ? "#3ddc84" : "#ff5c5c";
+      // Color reflects gain/loss vs. 昨收 (previous same-type session's
+      // close), matching how TW index/futures charts read — not just
+      // whether the visible window happens to have crept up or down.
+      const refPrice = sessionBlock.prevClose != null ? sessionBlock.prevClose : linePoints[0].price;
+      const rising = linePoints[linePoints.length - 1].price >= refPrice;
+      ctx.strokeStyle = rising ? COLOR_UP : COLOR_DOWN;
       ctx.lineWidth = 1.5;
       ctx.beginPath();
       linePoints.forEach((p, i) => {
@@ -498,12 +706,14 @@
       });
       ctx.stroke();
 
-      ctx.fillStyle = rising ? "#3ddc8422" : "#ff5c5c22";
+      ctx.fillStyle = rising ? COLOR_UP + "22" : COLOR_DOWN + "22";
       ctx.lineTo(x(n - 1), marginTop + plotH);
       ctx.lineTo(x(0), marginTop + plotH);
       ctx.closePath();
       ctx.fill();
     }
+
+    drawOverlayLine(ctx, plotW, y, lo, hi, sessionBlock.prevClose, "#8b96a5", `昨收 ${fmt(sessionBlock.prevClose, 1)}`, sessionBlock.prevClose != null);
 
     const pos = state.position;
     drawOverlayLine(ctx, plotW, y, lo, hi, pos.avg_price, "#4f8cff", `均 ${fmt(pos.avg_price, 1)}`, pos.qty !== 0);
@@ -536,8 +746,6 @@
     } else {
       $("chart-tooltip").classList.add("hidden");
     }
-
-    $("chart-legend").textContent = isCandle ? "每根蠟燭 = 60 秒" : "";
   }
 
   async function api(path, opts) {
@@ -639,6 +847,24 @@
       state.chartMode = btn.dataset.mode;
       document.querySelectorAll(".chart-mode-btn").forEach((b) => b.classList.toggle("active", b === btn));
       $("chart-range-group").classList.toggle("hidden", state.chartMode !== "line");
+      $("chart-interval-group").classList.toggle("hidden", state.chartMode !== "candle");
+      drawChart();
+    });
+  });
+
+  document.querySelectorAll(".chart-interval-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.candleIntervalSeconds = Number(btn.dataset.interval) * 60;
+      document.querySelectorAll(".chart-interval-btn").forEach((b) => b.classList.toggle("active", b === btn));
+      drawChart();
+    });
+  });
+
+  document.querySelectorAll(".chart-session-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.session = btn.dataset.session;
+      state.sessionManual = true;
+      syncSessionButtons();
       drawChart();
     });
   });

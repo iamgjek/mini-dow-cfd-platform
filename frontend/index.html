@@ -16,7 +16,10 @@
   </div>
   <div class="header-right">
     <div class="price-readout">
-      <div class="mid" id="price-mid">--</div>
+      <div class="mid-row">
+        <div class="mid" id="price-mid">--</div>
+        <div class="chg" id="price-chg">--</div>
+      </div>
       <div class="ba">
         <span class="ba-item bid"><span class="ba-label">Bid</span><span id="price-bid">--</span></span>
         <span class="ba-item ask"><span class="ba-label">Ask</span><span id="price-ask">--</span></span>
@@ -41,13 +44,24 @@
     <div class="chart-toolbar">
       <div class="chart-modes">
         <button class="chart-mode-btn active" id="mode-line" data-mode="line">線圖</button>
-        <button class="chart-mode-btn" id="mode-candle" data-mode="candle">K線 (1分)</button>
+        <button class="chart-mode-btn" id="mode-candle" data-mode="candle">K線</button>
+      </div>
+      <div class="chart-modes" id="chart-session-group">
+        <button class="chart-session-btn active" data-session="day">日盤</button>
+        <button class="chart-session-btn" data-session="night">夜盤</button>
       </div>
       <div class="chart-modes" id="chart-range-group">
         <button class="chart-range-btn" data-range="5">5分</button>
         <button class="chart-range-btn" data-range="15">15分</button>
         <button class="chart-range-btn" data-range="30">30分</button>
         <button class="chart-range-btn" data-range="60">1小時</button>
+      </div>
+      <div class="chart-modes hidden" id="chart-interval-group">
+        <button class="chart-interval-btn active" data-interval="1">1分</button>
+        <button class="chart-interval-btn" data-interval="5">5分</button>
+        <button class="chart-interval-btn" data-interval="15">15分</button>
+        <button class="chart-interval-btn" data-interval="30">30分</button>
+        <button class="chart-interval-btn" data-interval="60">1小時</button>
       </div>
       <div class="chart-legend" id="chart-legend"></div>
     </div>
