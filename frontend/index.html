@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>微小台指模擬交易平台</title>
-<link rel="stylesheet" href="style.css?v=8" />
+<link rel="stylesheet" href="style.css?v=11" />
 </head>
 <body>
 <header>
@@ -56,24 +56,12 @@
         <button class="chart-session-btn active" data-session="day">日盤</button>
         <button class="chart-session-btn" data-session="night">夜盤</button>
       </div>
-      <div class="chart-modes" id="chart-range-group">
-        <button class="chart-range-btn" data-range="5">5分</button>
-        <button class="chart-range-btn" data-range="15">15分</button>
-        <button class="chart-range-btn" data-range="30">30分</button>
-        <button class="chart-range-btn" data-range="60">1小時</button>
-      </div>
       <div class="chart-modes hidden" id="chart-interval-group">
         <button class="chart-interval-btn active" data-interval="1">1分</button>
         <button class="chart-interval-btn" data-interval="5">5分</button>
         <button class="chart-interval-btn" data-interval="15">15分</button>
         <button class="chart-interval-btn" data-interval="30">30分</button>
         <button class="chart-interval-btn" data-interval="60">1小時</button>
-      </div>
-      <div class="chart-modes hidden" id="chart-candle-range-group">
-        <button class="chart-candle-range-btn active" data-candle-range="0">全部</button>
-        <button class="chart-candle-range-btn" data-candle-range="60">近1小時</button>
-        <button class="chart-candle-range-btn" data-candle-range="120">近2小時</button>
-        <button class="chart-candle-range-btn" data-candle-range="240">近4小時</button>
       </div>
       <div class="chart-modes hidden" id="chart-indicator-group">
         <button class="chart-bbands-toggle" id="bbands-toggle">布林通道</button>
@@ -87,14 +75,12 @@
       <div class="chart-legend" id="chart-legend"></div>
     </div>
     <div class="chart-canvas-wrap">
-      <canvas id="chart"></canvas>
+      <div id="chart-container"></div>
+      <div class="chart-empty hidden" id="chart-empty"></div>
       <div class="chart-tooltip hidden" id="chart-tooltip"></div>
       <div class="session-toast" id="session-toast"></div>
     </div>
-    <div class="chart-subpanel-wrap hidden" id="chart-subpanel-wrap">
-      <div class="chart-legend" id="chart-subpanel-legend"></div>
-      <canvas id="chart-subpanel"></canvas>
-    </div>
+    <div class="chart-legend chart-subpanel-legend hidden" id="chart-subpanel-legend"></div>
   </section>
 
   <aside class="sidebar">
@@ -224,6 +210,7 @@
   </div>
 </div>
 
-<script src="app.js?v=11"></script>
+<script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+<script src="app.js?v=20"></script>
 </body>
 </html>

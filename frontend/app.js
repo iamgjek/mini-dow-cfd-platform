@@ -8,16 +8,7 @@
     trades: [],
     multiplier: 5,
     chartMode: "line",
-    lineRangeSeconds: 15 * 60,
     candleIntervalSeconds: 60,
-    // 0 means "show the whole session" (no lookback filter applied).
-    candleRangeSeconds: 0,
-    hoverIndex: null,
-    // Set by clicking/tapping a point on the chart; overrides hoverIndex so
-    // the crosshair/tooltip stays put after the mouse leaves or a touch
-    // ends (touch devices have no hover state to fall back on).
-    pinnedIndex: null,
-    lastLayout: null,
     positionModalOpen: false,
     modalRecordQty: null,
     recordTab: "holdings",
@@ -80,8 +71,8 @@
     return sessionType === "night" ? `夜盤 ${m}/${d} 15:00起` : `日盤 ${m}/${d}`;
   }
 
-  // Matches the button labels in #chart-range-group / #chart-interval-group
-  // (…30分, 1小時) so the legend reads the same way the control does.
+  // Matches the button labels in #chart-interval-group (…30分, 1小時) so the
+  // legend reads the same way the control does.
   function minutesLabel(sec) {
     const m = sec / 60;
     return m === 60 ? "1小時" : `${m}分`;
@@ -176,9 +167,10 @@
   // candle mode; the subpanel additionally only shows when a series is
   // actually selected. Called whenever chartMode or subpanel changes.
   function updateIndicatorVisibility() {
-    const isCandle = state.chartMode === "candle";
-    $("chart-indicator-group").classList.toggle("hidden", !isCandle);
-    $("chart-subpanel-wrap").classList.toggle("hidden", !isCandle || state.subpanel === "off");
+    // Subpanel pane height / legend visibility is owned by updateSubpanel()
+    // (called from updateChart()) — this just gates the 布林通道/副圖 controls
+    // themselves, which only make sense in K線 mode.
+    $("chart-indicator-group").classList.toggle("hidden", state.chartMode !== "candle");
   }
 
   async function bootstrapAuth() {
@@ -265,7 +257,7 @@
         }
         renderSessionStats(); // 開/高/低 can extend on every tick, not just on session change
         renderPrice(msg.data);
-        drawChart();
+        updateChart(false); // routine tick — append, don't reset the user's zoom/pan
         renderHoldings(); // live unrealized P&L per lot depends on the current price
         break;
       }
@@ -280,7 +272,7 @@
         renderOrders();
         renderHoldings();
         renderHistory();
-        drawChart();
+        updateChart(false); // only 均/SL/TP price lines change — don't reset zoom/pan
         break;
       case "order": {
         const idx = state.orders.findIndex((o) => o.id === msg.data.id);
@@ -314,7 +306,7 @@
         $("price-chg").textContent = "--";
         $("price-chg").className = "chg";
         renderDepth(null);
-        drawChart();
+        updateChart();
         break;
       }
       case "trade":
@@ -331,7 +323,7 @@
     renderOrders();
     renderHoldings();
     renderHistory();
-    drawChart();
+    updateChart();
   }
 
   // 五檔委買委賣 — bar width scaled to the largest quantity currently shown
@@ -741,27 +733,6 @@
 
   // Values with `null` gaps (the MA warmup period) break the line rather
   // than drawing a misleading segment down to zero.
-  function drawSeriesLine(ctx, xFn, yFn, values, color) {
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 1.25;
-    ctx.beginPath();
-    let started = false;
-    values.forEach((v, i) => {
-      if (v == null) {
-        started = false;
-        return;
-      }
-      const px = xFn(i), py = yFn(v);
-      if (!started) {
-        ctx.moveTo(px, py);
-        started = true;
-      } else {
-        ctx.lineTo(px, py);
-      }
-    });
-    ctx.stroke();
-  }
-
   function buildCandles(points, intervalSec) {
     const bins = new Map();
     for (const p of points) {
@@ -779,174 +750,139 @@
     return Array.from(bins.values()).sort((a, b) => a.t - b.t);
   }
 
-  // x is a time scale now (not evenly spaced by index), so hit-testing a
-  // mouse pixel back to "which point" needs a nearest-timestamp search
-  // rather than a direct proportional index calculation.
-  function findNearestIndexByTime(timestamps, t) {
-    let lo = 0, hi = timestamps.length - 1;
-    if (t <= timestamps[0]) return 0;
-    if (t >= timestamps[hi]) return hi;
-    while (lo < hi) {
-      const mid = (lo + hi) >> 1;
-      if (timestamps[mid] < t) lo = mid + 1;
-      else hi = mid;
-    }
-    if (lo > 0 && Math.abs(timestamps[lo - 1] - t) <= Math.abs(timestamps[lo] - t)) return lo - 1;
-    return lo;
-  }
-
+  // Explicit Asia/Taipei so this reads the same regardless of the viewer's
+  // own timezone — matches taipeiClassify()'s assumption elsewhere.
   function fmtClock(ts) {
-    return new Date(ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    return new Date(ts * 1000).toLocaleTimeString([], { timeZone: "Asia/Taipei", hour: "2-digit", minute: "2-digit", hour12: false });
   }
 
-  // Rounds a rough tick spacing to a "nice" 1/2/5 × 10ⁿ step, so axis
-  // labels land on numbers a human would pick rather than an arbitrary
-  // division of the visible range into N equal parts.
-  function niceStep(roughStep) {
-    if (!(roughStep > 0)) return 1;
-    const exp = Math.floor(Math.log10(roughStep));
-    const base = Math.pow(10, exp);
-    const frac = roughStep / base;
-    const niceFrac = frac < 1.5 ? 1 : frac < 3 ? 2 : frac < 7 ? 5 : 10;
-    return niceFrac * base;
+  // === Chart rendering (TradingView Lightweight Charts) ===================
+  // Replaced a hand-rolled canvas renderer here — see git history before
+  // this commit for the old drawChart()/drawSubpanel() implementation.
+  // Two always-present series (candle/area) toggle `visible` for K線/線圖
+  // instead of swapping series types (the library doesn't support that in
+  // place). KD/MACD/RSI live in pane 1 (native multi-pane support), and
+  // 現價/昨收/均/停損/停利 are native price lines rather than hand-drawn tags.
+  let chart, candleSeries, areaSeries, maLineSeries, bbSeries, subSeries;
+  const priceLineRefs = {}; // key -> { series, line } — see setPriceLine()
+
+  function initChart() {
+    const LWC = window.LightweightCharts;
+    chart = LWC.createChart($("chart-container"), {
+      autoSize: true,
+      layout: { background: { color: "transparent" }, textColor: "#8b96a5", fontSize: 11 },
+      grid: { vertLines: { color: "#2a3140" }, horzLines: { color: "#2a3140" } },
+      rightPriceScale: { borderColor: "#2a3140" },
+      timeScale: { borderColor: "#2a3140", timeVisible: true, secondsVisible: false, tickMarkFormatter: (t) => fmtClock(t) },
+      crosshair: { mode: LWC.CrosshairMode.Normal },
+      trackingMode: { exitMode: LWC.TrackingModeExitMode.OnNextTap },
+      localization: { priceFormatter: (p) => fmt(p, 1) },
+    });
+
+    const noAutoLine = { priceLineVisible: false, lastValueVisible: false };
+    candleSeries = chart.addSeries(LWC.CandlestickSeries, {
+      upColor: COLOR_UP, downColor: COLOR_DOWN, borderUpColor: COLOR_UP, borderDownColor: COLOR_DOWN,
+      wickUpColor: COLOR_UP, wickDownColor: COLOR_DOWN, ...noAutoLine,
+    }, 0);
+    areaSeries = chart.addSeries(LWC.AreaSeries, {
+      lineColor: COLOR_UP, topColor: COLOR_UP + "33", bottomColor: COLOR_UP + "00", lineWidth: 2, ...noAutoLine,
+    }, 0);
+
+    maLineSeries = {};
+    MA_STYLES.forEach((s) => {
+      maLineSeries[s.period] = chart.addSeries(LWC.LineSeries, { color: s.color, lineWidth: 1, ...noAutoLine }, 0);
+    });
+    bbSeries = {
+      upper: chart.addSeries(LWC.LineSeries, { color: "#7a88ad", lineWidth: 1, ...noAutoLine }, 0),
+      mid: chart.addSeries(LWC.LineSeries, { color: "#5a6684", lineWidth: 1, ...noAutoLine }, 0),
+      lower: chart.addSeries(LWC.LineSeries, { color: "#7a88ad", lineWidth: 1, ...noAutoLine }, 0),
+    };
+
+    subSeries = {
+      kdK: chart.addSeries(LWC.LineSeries, { color: "#f2c94c", lineWidth: 1, ...noAutoLine }, 1),
+      kdD: chart.addSeries(LWC.LineSeries, { color: "#64d8ff", lineWidth: 1, ...noAutoLine }, 1),
+      rsi: chart.addSeries(LWC.LineSeries, { color: "#bb86fc", lineWidth: 1, ...noAutoLine }, 1),
+      macdHist: chart.addSeries(LWC.HistogramSeries, { ...noAutoLine }, 1),
+      macdDif: chart.addSeries(LWC.LineSeries, { color: "#f2c94c", lineWidth: 1, ...noAutoLine }, 1),
+      macdSignal: chart.addSeries(LWC.LineSeries, { color: "#64d8ff", lineWidth: 1, ...noAutoLine }, 1),
+    };
+    chart.panes()[1].setHeight(0); // starts closed; updateSubpanel() opens it when a series is picked
+
+    chart.subscribeCrosshairMove(handleCrosshairMove);
   }
 
-  // Candidate spacings for X-axis ticks, in seconds: 1/5/10/15/30 min,
-  // 1/2/4 hour — covers everything from a 5-minute line-chart window up to
-  // a full ~14h night session shown "全部".
-  const TIME_TICK_STEPS = [60, 300, 600, 900, 1800, 3600, 7200, 14400];
-  const TAIPEI_OFFSET_SECONDS = 8 * 3600;
-
-  // Picks a step that lands 4~6 ticks in [tStart, tEnd], then aligns them to
-  // real clock boundaries (on the minute/hour) instead of splitting the
-  // visible range into N even-but-arbitrary slices. Taiwan is fixed UTC+8
-  // with no DST, so aligning to local clock boundaries is just arithmetic —
-  // no need to round-trip through the Intl formatter taipeiClassify() uses.
-  function niceTimeTicks(tStart, tEnd) {
-    const span = tEnd - tStart || 1;
-    let step = TIME_TICK_STEPS[TIME_TICK_STEPS.length - 1];
-    for (const candidate of TIME_TICK_STEPS) {
-      if (span / candidate <= 6) {
-        step = candidate;
-        break;
-      }
+  // Creates/updates/removes a price line, moving it between candleSeries and
+  // areaSeries if the active series changed since the last call (switching
+  // 線圖/K線 modes) — a price line belongs to one series in this library.
+  function setPriceLine(key, series, options) {
+    const entry = priceLineRefs[key] || (priceLineRefs[key] = { series: null, line: null });
+    if (entry.line && entry.series !== series) {
+      entry.series.removePriceLine(entry.line);
+      entry.line = null;
     }
-    const ticks = [];
-    let t = Math.ceil((tStart + TAIPEI_OFFSET_SECONDS) / step) * step - TAIPEI_OFFSET_SECONDS;
-    for (; t <= tEnd; t += step) {
-      if (t >= tStart) ticks.push(t);
+    if (options === null) {
+      if (entry.line) entry.series.removePriceLine(entry.line);
+      entry.line = null;
+      entry.series = null;
+      return;
     }
-    return ticks;
-  }
-
-  // Nudges labels that would render too close together in Y apart, while
-  // leaving each item's reference line at its true price height (`y`) —
-  // only the label's own position (`labelY`) moves. Mutates and returns
-  // `items`, sorted top-to-bottom.
-  function declutterLabels(items, minGap) {
-    items.sort((a, b) => a.y - b.y);
-    items.forEach((it) => { it.labelY = it.y; });
-    for (let i = 1; i < items.length; i++) {
-      if (items[i].labelY - items[i - 1].labelY < minGap) {
-        items[i].labelY = items[i - 1].labelY + minGap;
-      }
-    }
-    return items;
-  }
-
-  // A solid, boxed label pinned to the right axis — used for 現價/昨收 so
-  // they read at a glance instead of blending into the plain-text overlay
-  // labels used for 均價/停損/停利 (drawOverlayLine). `labelY` may differ
-  // from `yy` (the line's true height) when declutterLabels nudged it.
-  function drawPriceTag(ctx, plotW, yy, labelY, color, label) {
-    ctx.setLineDash([5, 4]);
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(0, yy);
-    ctx.lineTo(plotW, yy);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.font = "10px sans-serif";
-    const boxW = ctx.measureText(label).width + 8, boxH = 14;
-    ctx.fillStyle = color;
-    ctx.fillRect(plotW, labelY - boxH / 2, boxW, boxH);
-    ctx.fillStyle = "#0b0f17";
-    ctx.textBaseline = "middle";
-    ctx.fillText(label, plotW + 4, labelY + 1);
-    ctx.textBaseline = "alphabetic";
-  }
-
-  function drawOverlayLine(ctx, plotW, yy, labelY, color, label) {
-    ctx.setLineDash([5, 4]);
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(0, yy);
-    ctx.lineTo(plotW, yy);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.fillStyle = color;
-    ctx.font = "10px sans-serif";
-    ctx.fillText(label, 4, labelY - 3);
-  }
-
-  function updateTooltip(isCandle, point, xx, w) {
-    const tip = $("chart-tooltip");
-    if (isCandle) {
-      tip.innerHTML = `<div>${fmtTime(point.t)}</div><div>開 ${fmt(point.o, 1)}&nbsp;&nbsp;高 ${fmt(point.h, 1)}</div><div>低 ${fmt(point.l, 1)}&nbsp;&nbsp;收 ${fmt(point.c, 1)}</div>`;
+    if (entry.line) {
+      entry.line.applyOptions(options);
     } else {
-      tip.innerHTML = `<div>${fmtTime(point.ts)}</div><div>價格 ${fmt(point.price, 1)}</div>`;
+      entry.line = series.createPriceLine(options);
+      entry.series = series;
     }
-    tip.classList.remove("hidden");
-    tip.style.left = `${Math.max(4, xx > w - 130 ? xx - 120 : xx + 10)}px`;
   }
 
-  function drawChart() {
-    const canvas = $("chart");
-    const dpr = window.devicePixelRatio || 1;
-    const rect = canvas.getBoundingClientRect();
-    if (rect.width === 0) return;
-    canvas.width = rect.width * dpr;
-    canvas.height = rect.height * dpr;
-    const ctx = canvas.getContext("2d");
-    ctx.scale(dpr, dpr);
-    const w = rect.width, h = rect.height;
-    ctx.clearRect(0, 0, w, h);
+  function priceLineStyle(color, title) {
+    return {
+      price: 0, color, lineWidth: 1, lineStyle: window.LightweightCharts.LineStyle.Dashed,
+      axisLabelVisible: true, title, axisLabelColor: color, axisLabelTextColor: "#0b0f17",
+    };
+  }
 
+  function toLinePoints(candles, values) {
+    const out = [];
+    for (let i = 0; i < candles.length; i++) {
+      if (values[i] != null) out.push({ time: candles[i].t, value: values[i] });
+    }
+    return out;
+  }
+
+  // `structural` distinguishes two very different reasons to call this:
+  //  - true:  the dataset's identity changed (session/mode/interval switch,
+  //    indicator toggled, initial load) — full setData() rebuild, then
+  //    fitContent() to frame it.
+  //  - false: a routine live tick in the same context — append/patch just
+  //    the latest point via update() and leave the time scale alone.
+  // Calling setData()+fitContent() on every tick (the original approach)
+  // meant Lightweight Charts' own zoom/pan/scroll — the whole reason to
+  // stop hand-rolling a range selector — got reset every second or so.
+  // Only the structural path may re-frame the view; ticks must not.
+  function updateChart(structural = true) {
+    if (!chart) return;
     const isCandle = state.chartMode === "candle";
+    candleSeries.applyOptions({ visible: isCandle });
+    areaSeries.applyOptions({ visible: !isCandle });
+    Object.values(maLineSeries).forEach((s) => s.applyOptions({ visible: isCandle }));
+
     // Chart only ever shows one 日盤/夜盤 block at a time — the two sessions
     // are separated by multi-hour closed gaps, so connecting across them
-    // (or letting a 2h candle lookback bleed into the prior session) would
-    // draw a misleading line/reference set.
+    // would draw a misleading line/reference set. Within a session, the
+    // full block is always handed to the chart now — Lightweight Charts'
+    // own scroll/zoom is how the user picks a narrower range, not a
+    // pre-filter on the data (see docs/trading-info-chart-spec.md).
     const sessionBlock = findSessionBlock(state.history, state.session);
     const sessionPoints = sessionBlock.points;
+    const linePoints = sessionPoints;
+    const candles = isCandle ? buildCandles(sessionPoints, state.candleIntervalSeconds) : [];
 
-    // Real quotes don't arrive on a steady 1-tick/sec cadence, so windows are
-    // cut by actual timestamp rather than array-index count.
-    const lastTs = sessionPoints.length ? sessionPoints[sessionPoints.length - 1].ts : null;
-    const linePoints = lastTs === null ? [] : sessionPoints.filter((p) => p.ts >= lastTs - state.lineRangeSeconds);
-    const candleSourcePoints =
-      state.candleRangeSeconds > 0 && lastTs !== null
-        ? sessionPoints.filter((p) => p.ts >= lastTs - state.candleRangeSeconds)
-        : sessionPoints;
-    const candles = isCandle ? buildCandles(candleSourcePoints, state.candleIntervalSeconds) : null;
-
-    // The most recent bar's time window may not have closed yet — flag it so
-    // it isn't mistaken for a settled candle.
-    const nowSec = Date.now() / 1000;
-    const lastCandleLive =
-      isCandle && candles.length > 0 && nowSec < candles[candles.length - 1].t + state.candleIntervalSeconds;
-
-    // Computed up here (rather than down by the other chart-derived series)
-    // so the legend can show each MA's live value/arrow next to its dot.
     const maSeries = isCandle
       ? MA_STYLES.map((s) => ({ period: s.period, color: s.color, values: sma(candles.map((c) => c.c), s.period) }))
       : [];
 
     const legendBits = [sessionLabelText(sessionBlock.blockKey, state.session)];
     if (isCandle) legendBits.push(`每根蠟燭 = ${minutesLabel(state.candleIntervalSeconds)}`);
-    if (lastCandleLive) legendBits.push("最新K棒尚未收盤");
     $("chart-legend").innerHTML =
       legendBits.join(" · ") +
       (isCandle
@@ -959,311 +895,210 @@
             .join("")
         : "");
 
-    const plotData = isCandle ? candles : linePoints;
-    if (!plotData || plotData.length < 2) {
-      $("chart-tooltip").classList.add("hidden");
-      state.lastLayout = null;
-      ctx.fillStyle = "#8b96a5";
-      ctx.font = "13px sans-serif";
-      ctx.textAlign = "center";
-      ctx.fillText(`尚無${state.session === "night" ? "夜盤" : "日盤"}資料`, w / 2, h / 2);
-      ctx.textAlign = "left";
-      clearSubpanel(); // otherwise it'd keep showing the previous session's stale render
-      return;
-    }
-
-    const marginRight = 52, marginBottom = 22, marginTop = 6;
-    const plotW = w - marginRight, plotH = h - marginBottom - marginTop;
-    const n = plotData.length;
-
-    // Real ticks don't arrive on a steady cadence — a burst of updates
-    // shouldn't visually stretch that stretch of time out relative to a
-    // quiet period. x is placed by actual elapsed time, not by point
-    // index/count, so the axis stays a true (if non-uniformly sampled)
-    // time scale; a gap in trading shows as blank space rather than
-    // silently pulling its neighbors together.
-    const tOf = (i) => (isCandle ? candles[i].t : linePoints[i].ts);
-    const tStart = tOf(0);
-    const tSpan = tOf(n - 1) - tStart || 1;
-    const xOfTime = (t) => ((t - tStart) / tSpan) * plotW;
-    const x = (i) => xOfTime(tOf(i));
-
-    state.lastLayout = { n, plotW, isCandle, tStart, tSpan, ts: plotData.map((_, i) => tOf(i)) };
-
-    const values = isCandle ? candles.flatMap((c) => [c.h, c.l]) : linePoints.map((p) => p.price);
-    maSeries.forEach((s) => s.values.forEach((v) => { if (v != null) values.push(v); }));
-    // Computed here (not down by the candle-drawing code) so the bands are
-    // included when sizing the Y-axis range — otherwise they'd get clipped
-    // whenever price hugs one edge of the visible range.
-    const bbands = isCandle && state.bbandsOn ? computeBollinger(candles) : null;
-    if (bbands) {
-      [bbands.upper, bbands.lower].forEach((series) => series.forEach((v) => { if (v != null) values.push(v); }));
-    }
-    if (sessionBlock.prevClose != null) values.push(sessionBlock.prevClose);
-    // avg_price of 0 is never a real index price — a position stuck in that
-    // state (e.g. a fill that slipped through before the feed had a real
-    // quote) shouldn't be able to blow the whole axis out to zero.
-    const hasValidPosition = state.position.qty !== 0 && state.position.avg_price > 0;
-    if (hasValidPosition) {
-      values.push(state.position.avg_price);
-      if (state.position.stop_loss != null && state.position.stop_loss > 0) values.push(state.position.stop_loss);
-      if (state.position.take_profit != null && state.position.take_profit > 0) values.push(state.position.take_profit);
-    }
-    const min = Math.min(...values), max = Math.max(...values);
-    const pad = (max - min) * 0.12 || 1;
-    const lo = min - pad, hi = max + pad;
-
-    const y = (v) => marginTop + plotH - ((v - lo) / (hi - lo)) * plotH;
-
-    // Y-axis ticks land on "nice" round numbers (1/2/5 × 10ⁿ apart) instead
-    // of splitting [lo, hi] into a fixed 4 equal — and usually decimal-ugly
-    // — slices.
-    const yStep = niceStep((hi - lo) / 4);
-    ctx.strokeStyle = "#2a3140";
-    ctx.lineWidth = 1;
-    ctx.font = "11px sans-serif";
-    ctx.fillStyle = "#8b96a5";
-    for (let v = Math.ceil(lo / yStep) * yStep; v <= hi; v += yStep) {
-      const yy = y(v);
-      ctx.beginPath();
-      ctx.moveTo(0, yy);
-      ctx.lineTo(plotW, yy);
-      ctx.stroke();
-      ctx.fillText(fmt(v, 1), plotW + 4, yy + 3);
-    }
-
-    // X-axis ticks land on real clock boundaries (see niceTimeTicks) rather
-    // than an even split of the visible time range. The bands between
-    // alternating ticks get a faint fill first (bottom layer), then
-    // gridlines + labels on top, all still before candles/line are drawn.
-    const xTicks = niceTimeTicks(tStart, tOf(n - 1));
-    const xBoundaries = [0, ...xTicks.map(xOfTime), plotW];
-    for (let k = 0; k < xBoundaries.length - 1; k++) {
-      if (k % 2 === 1) {
-        ctx.fillStyle = "rgba(255, 255, 255, 0.025)";
-        ctx.fillRect(xBoundaries[k], marginTop, xBoundaries[k + 1] - xBoundaries[k], plotH);
-      }
-    }
-    xTicks.forEach((t) => {
-      const xx = xOfTime(t);
-      ctx.strokeStyle = "#2a3140";
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(xx, marginTop);
-      ctx.lineTo(xx, marginTop + plotH);
-      ctx.stroke();
-      ctx.fillStyle = "#8b96a5";
-      ctx.font = "11px sans-serif";
-      ctx.fillText(fmtClock(t), Math.min(Math.max(xx - 18, 0), plotW - 34), h - 4);
-    });
+    // update() only ever touches the last point of a series (appends if its
+    // time is new, replaces if it matches the existing last bar) — skipped
+    // entirely for null values (an indicator still in its warmup period)
+    // since Lightweight Charts data points don't accept null.
+    const updateLast = (series, point) => {
+      if (point.value === null || point.value === undefined) return;
+      series.update(point);
+    };
 
     if (isCandle) {
-      // Width per candle is derived from time-per-pixel now that x is a
-      // real time scale, not from plotW/n — a gap in trading shouldn't
-      // make surrounding candles balloon to fill the freed-up space.
-      const pixelsPerInterval = (plotW / tSpan) * state.candleIntervalSeconds;
-      const candleW = Math.max(1, Math.min(12, pixelsPerInterval * 0.7));
-      const wickWidth = Math.max(1, Math.min(1.6, candleW * 0.14));
-      candles.forEach((c, i) => {
-        const xx = Math.round(x(i));
-        const up = c.c >= c.o;
-        const color = up ? COLOR_UP : COLOR_DOWN;
-        const isLive = lastCandleLive && i === candles.length - 1;
-        ctx.strokeStyle = color;
-        ctx.fillStyle = isLive ? color + "66" : color;
-        ctx.lineWidth = wickWidth;
-        ctx.setLineDash(isLive ? [2, 2] : []);
-        ctx.beginPath();
-        ctx.moveTo(xx, y(c.h));
-        ctx.lineTo(xx, y(c.l));
-        ctx.stroke();
-        const bodyTop = Math.round(y(Math.max(c.o, c.c)));
-        const bodyBottom = Math.round(y(Math.min(c.o, c.c)));
-        const bodyH = Math.max(1.5, bodyBottom - bodyTop);
-        ctx.fillRect(xx - candleW / 2, bodyTop, candleW, bodyH);
-        if (isLive) {
-          ctx.strokeStyle = color;
-          ctx.lineWidth = 1;
-          ctx.strokeRect(xx - candleW / 2, bodyTop, candleW, bodyH);
+      if (structural) {
+        candleSeries.setData(candles.map((c) => ({ time: c.t, open: c.o, high: c.h, low: c.l, close: c.c })));
+        maSeries.forEach((s) => maLineSeries[s.period].setData(toLinePoints(candles, s.values)));
+        if (state.bbandsOn) {
+          const bb = computeBollinger(candles);
+          bbSeries.upper.setData(toLinePoints(candles, bb.upper));
+          bbSeries.mid.setData(toLinePoints(candles, bb.mid));
+          bbSeries.lower.setData(toLinePoints(candles, bb.lower));
+        } else {
+          // A hidden series (visible: false) still counts toward the shared
+          // price scale's autoscale unless its data is also cleared.
+          Object.values(bbSeries).forEach((s) => s.setData([]));
         }
-        ctx.setLineDash([]);
-      });
-      maSeries.forEach((s) => drawSeriesLine(ctx, x, y, s.values, s.color));
-      if (bbands) {
-        drawSeriesLine(ctx, x, y, bbands.upper, "#7a88ad");
-        drawSeriesLine(ctx, x, y, bbands.mid, "#5a6684");
-        drawSeriesLine(ctx, x, y, bbands.lower, "#7a88ad");
+        areaSeries.setData([]);
+      } else if (candles.length) {
+        const last = candles[candles.length - 1];
+        candleSeries.update({ time: last.t, open: last.o, high: last.h, low: last.l, close: last.c });
+        maSeries.forEach((s) => updateLast(maLineSeries[s.period], { time: last.t, value: s.values[s.values.length - 1] }));
+        if (state.bbandsOn) {
+          const bb = computeBollinger(candles);
+          const i = candles.length - 1;
+          updateLast(bbSeries.upper, { time: last.t, value: bb.upper[i] });
+          updateLast(bbSeries.mid, { time: last.t, value: bb.mid[i] });
+          updateLast(bbSeries.lower, { time: last.t, value: bb.lower[i] });
+        }
       }
+      Object.values(bbSeries).forEach((s) => s.applyOptions({ visible: state.bbandsOn }));
     } else {
+      if (structural) {
+        areaSeries.setData(linePoints.map((p) => ({ time: p.ts, value: p.price })));
+      } else if (linePoints.length) {
+        const last = linePoints[linePoints.length - 1];
+        areaSeries.update({ time: last.ts, value: last.price });
+      }
       // Color reflects gain/loss vs. 昨收 (previous same-type session's
       // close), matching how TW index/futures charts read — not just
       // whether the visible window happens to have crept up or down.
-      const refPrice = sessionBlock.prevClose != null ? sessionBlock.prevClose : linePoints[0].price;
-      const rising = linePoints[linePoints.length - 1].price >= refPrice;
-      ctx.strokeStyle = rising ? COLOR_UP : COLOR_DOWN;
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      linePoints.forEach((p, i) => {
-        const px = x(i), py = y(p.price);
-        if (i === 0) ctx.moveTo(px, py);
-        else ctx.lineTo(px, py);
-      });
-      ctx.stroke();
-
-      ctx.fillStyle = rising ? COLOR_UP + "22" : COLOR_DOWN + "22";
-      ctx.lineTo(x(n - 1), marginTop + plotH);
-      ctx.lineTo(x(0), marginTop + plotH);
-      ctx.closePath();
-      ctx.fill();
+      if (linePoints.length) {
+        const refPrice = sessionBlock.prevClose != null ? sessionBlock.prevClose : linePoints[0].price;
+        const rising = linePoints[linePoints.length - 1].price >= refPrice;
+        const color = rising ? COLOR_UP : COLOR_DOWN;
+        areaSeries.applyOptions({ lineColor: color, topColor: color + "33", bottomColor: color + "00" });
+      }
+      if (structural) {
+        candleSeries.setData([]);
+        Object.values(maLineSeries).forEach((s) => s.setData([]));
+        Object.values(bbSeries).forEach((s) => s.setData([]));
+      }
+      Object.values(bbSeries).forEach((s) => s.applyOptions({ visible: false }));
     }
 
-    // 昨收/現價 share the boxed-tag style on the right axis; collected first
-    // and run through declutterLabels so two close values don't print
-    // overlapping text (P1-4) — the dashed line itself still lands at the
-    // exact price height, only the label may be nudged.
-    const tagItems = [];
-    if (sessionBlock.prevClose != null && sessionBlock.prevClose >= lo && sessionBlock.prevClose <= hi) {
-      tagItems.push({ y: y(sessionBlock.prevClose), color: "#8b96a5", label: `昨收 ${fmt(sessionBlock.prevClose, 1)}` });
-    }
-    if (state.lastTick && state.lastTick.mid >= lo && state.lastTick.mid <= hi) {
-      // Colored by gain/loss vs 昨收 (or the session's first point when
-      // there's no 昨收 yet), same reference the line-mode fill color uses.
-      const refPrice = sessionBlock.prevClose != null ? sessionBlock.prevClose : plotData[0][isCandle ? "c" : "price"];
+    const plotData = isCandle ? candles : linePoints;
+    if (!plotData.length) $("chart-tooltip").classList.add("hidden");
+    $("chart-empty").classList.toggle("hidden", plotData.length > 0);
+    $("chart-empty").textContent = `尚無${state.session === "night" ? "夜盤" : "日盤"}資料`;
+
+    // 昨收/現價/均/停損/停利 as native price lines on whichever series is
+    // currently visible (setPriceLine moves them over on a mode switch).
+    // Price lines don't affect the time scale, so these always run — no
+    // structural/tick distinction needed here.
+    const activeSeries = isCandle ? candleSeries : areaSeries;
+    setPriceLine("prevClose", activeSeries, sessionBlock.prevClose != null
+      ? { ...priceLineStyle("#8b96a5", "昨收"), price: sessionBlock.prevClose }
+      : null);
+
+    if (state.lastTick && plotData.length) {
+      const firstPrice = isCandle ? candles[0].c : linePoints[0].price;
+      const refPrice = sessionBlock.prevClose != null ? sessionBlock.prevClose : firstPrice;
       const tagColor = state.lastTick.mid >= refPrice ? COLOR_UP : COLOR_DOWN;
-      tagItems.push({ y: y(state.lastTick.mid), color: tagColor, label: fmt(state.lastTick.mid, 1) });
-    }
-    declutterLabels(tagItems, 16).forEach((it) => drawPriceTag(ctx, plotW, it.y, it.labelY, it.color, it.label));
-
-    // 均價/停損/停利 — same declutter treatment, plain-text style on the left.
-    const pos = state.position;
-    const overlayItems = [];
-    const maybeAddOverlay = (value, color, label, visible) => {
-      if (visible && value != null && value >= lo && value <= hi) overlayItems.push({ y: y(value), color, label });
-    };
-    maybeAddOverlay(pos.avg_price, "#4f8cff", `均 ${fmt(pos.avg_price, 1)}`, hasValidPosition);
-    maybeAddOverlay(pos.stop_loss, "#ff5c5c", `SL ${fmt(pos.stop_loss, 1)}`, hasValidPosition && pos.stop_loss != null && pos.stop_loss > 0);
-    maybeAddOverlay(pos.take_profit, "#3ddc84", `TP ${fmt(pos.take_profit, 1)}`, hasValidPosition && pos.take_profit != null && pos.take_profit > 0);
-    declutterLabels(overlayItems, 14).forEach((it) => drawOverlayLine(ctx, plotW, it.y, it.labelY, it.color, it.label));
-
-    const activeIndex = state.pinnedIndex !== null ? state.pinnedIndex : state.hoverIndex;
-    if (activeIndex !== null && activeIndex < n) {
-      const i = activeIndex;
-      const point = isCandle ? candles[i] : linePoints[i];
-      const v = isCandle ? point.c : point.price;
-      const xx = x(i), yy = y(v);
-      ctx.setLineDash([3, 3]);
-      ctx.strokeStyle = "#8b96a5";
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(xx, marginTop);
-      ctx.lineTo(xx, marginTop + plotH);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(0, yy);
-      ctx.lineTo(plotW, yy);
-      ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.fillStyle = "#e6e9ef";
-      ctx.beginPath();
-      ctx.arc(xx, yy, 3, 0, Math.PI * 2);
-      ctx.fill();
-
-      updateTooltip(isCandle, point, xx, w);
+      setPriceLine("current", activeSeries, { ...priceLineStyle(tagColor, ""), price: state.lastTick.mid });
     } else {
-      $("chart-tooltip").classList.add("hidden");
+      setPriceLine("current", activeSeries, null);
     }
 
-    if (isCandle) drawSubpanel(candles, tStart, tSpan);
+    const pos = state.position;
+    // avg_price of 0 is never a real index price — a position stuck in that
+    // state (e.g. a fill that slipped through before the feed had a real
+    // quote) shouldn't put a price line at zero.
+    const hasValidPosition = pos.qty !== 0 && pos.avg_price > 0;
+    setPriceLine("avg", activeSeries, hasValidPosition ? { ...priceLineStyle("#4f8cff", "均"), price: pos.avg_price } : null);
+    setPriceLine("sl", activeSeries, (hasValidPosition && pos.stop_loss != null && pos.stop_loss > 0)
+      ? { ...priceLineStyle("#ff5c5c", "SL"), price: pos.stop_loss } : null);
+    setPriceLine("tp", activeSeries, (hasValidPosition && pos.take_profit != null && pos.take_profit > 0)
+      ? { ...priceLineStyle("#3ddc84", "TP"), price: pos.take_profit } : null);
+
+    updateSubpanel(candles, structural);
+
+    if (structural) chart.timeScale().fitContent();
   }
 
-  function clearSubpanel() {
-    const canvas = $("chart-subpanel");
-    canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height);
-    $("chart-subpanel-legend").innerHTML = "";
-  }
-
-  // KD/MACD/RSI share one panel, switched by a dropdown rather than shown
-  // as simultaneous stacked panels — see docs/trading-info-chart-spec.md
-  // P0-12. Reuses the main chart's time mapping (tStart/tSpan) so the two
-  // canvases' X axes line up pixel-for-pixel.
-  function drawSubpanel(candles, tStart, tSpan) {
-    if (state.subpanel === "off") return;
-    const canvas = $("chart-subpanel");
+  // KD/MACD/RSI share one native pane (index 1), switched by a dropdown
+  // rather than shown as simultaneous stacked panels — see
+  // docs/trading-info-chart-spec.md P0-12.
+  function updateSubpanel(candles, structural) {
+    const mode = state.chartMode === "candle" ? state.subpanel : "off";
     const legend = $("chart-subpanel-legend");
-    const dpr = window.devicePixelRatio || 1;
-    const rect = canvas.getBoundingClientRect();
-    if (rect.width === 0) return;
-    canvas.width = rect.width * dpr;
-    canvas.height = rect.height * dpr;
-    const ctx = canvas.getContext("2d");
-    ctx.scale(dpr, dpr);
-    const w = rect.width, h = rect.height;
-    ctx.clearRect(0, 0, w, h);
+    const pane1 = chart.panes()[1];
+    if (pane1) pane1.setHeight(mode === "off" ? 0 : 110);
 
-    if (candles.length < 2) {
+    subSeries.kdK.applyOptions({ visible: mode === "kd" });
+    subSeries.kdD.applyOptions({ visible: mode === "kd" });
+    subSeries.rsi.applyOptions({ visible: mode === "rsi" });
+    subSeries.macdHist.applyOptions({ visible: mode === "macd" });
+    subSeries.macdDif.applyOptions({ visible: mode === "macd" });
+    subSeries.macdSignal.applyOptions({ visible: mode === "macd" });
+    if (structural) {
+      // A hidden series still counts toward pane 1's autoscale unless its
+      // data is cleared too — wipe whichever indicator(s) aren't active.
+      if (mode !== "kd") { subSeries.kdK.setData([]); subSeries.kdD.setData([]); }
+      if (mode !== "rsi") subSeries.rsi.setData([]);
+      if (mode !== "macd") { subSeries.macdHist.setData([]); subSeries.macdDif.setData([]); subSeries.macdSignal.setData([]); }
+    }
+
+    if (mode === "off" || candles.length < 2) {
       legend.innerHTML = "";
+      legend.classList.add("hidden");
       return;
     }
+    legend.classList.remove("hidden");
 
-    const marginRight = 52, marginTop = 6, marginBottom = 4;
-    const plotW = w - marginRight, plotH = h - marginTop - marginBottom;
-    const xAt = (i) => ((candles[i].t - tStart) / tSpan) * plotW;
-
-    const drawRefLine = (yy) => {
-      ctx.setLineDash([3, 3]);
-      ctx.strokeStyle = "#2a3140";
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(0, yy);
-      ctx.lineTo(plotW, yy);
-      ctx.stroke();
-      ctx.setLineDash([]);
-    };
     const legendEntry = (color, text) => `<span style="color:${color};">${text}</span>`;
+    const last = candles[candles.length - 1];
+    const updateLast = (series, value) => {
+      if (value == null) return;
+      series.update({ time: last.t, value });
+    };
 
-    if (state.subpanel === "kd") {
+    if (mode === "kd") {
       const { k, d } = computeKD(candles);
-      const yFn = (v) => marginTop + plotH - (v / 100) * plotH;
-      [20, 50, 80].forEach((v) => drawRefLine(yFn(v)));
-      drawSeriesLine(ctx, xAt, yFn, k, "#f2c94c");
-      drawSeriesLine(ctx, xAt, yFn, d, "#64d8ff");
+      if (structural) {
+        subSeries.kdK.setData(toLinePoints(candles, k));
+        subSeries.kdD.setData(toLinePoints(candles, d));
+      } else {
+        updateLast(subSeries.kdK, k[k.length - 1]);
+        updateLast(subSeries.kdD, d[d.length - 1]);
+      }
       const kt = lastTrend(k), dt = lastTrend(d);
       legend.innerHTML =
         legendEntry("#f2c94c", `K ${kt ? fmt(kt.value, 1) + kt.arrow : "--"}`) +
         " " +
         legendEntry("#64d8ff", `D ${dt ? fmt(dt.value, 1) + dt.arrow : "--"}`);
-    } else if (state.subpanel === "rsi") {
+    } else if (mode === "rsi") {
       const rsi = computeRSI(candles);
-      const yFn = (v) => marginTop + plotH - (v / 100) * plotH;
-      [30, 50, 70].forEach((v) => drawRefLine(yFn(v)));
-      drawSeriesLine(ctx, xAt, yFn, rsi, "#bb86fc");
+      if (structural) subSeries.rsi.setData(toLinePoints(candles, rsi));
+      else updateLast(subSeries.rsi, rsi[rsi.length - 1]);
       const t = lastTrend(rsi);
       legend.innerHTML = legendEntry("#bb86fc", `RSI ${t ? fmt(t.value, 1) + t.arrow : "--"}`);
-    } else if (state.subpanel === "macd") {
+    } else if (mode === "macd") {
       const { dif, macd, hist } = computeMACD(candles);
-      const finite = [...dif, ...macd, ...hist].filter((v) => v != null).map(Math.abs);
-      const maxAbs = finite.length ? Math.max(...finite) : 1;
-      const lo = -maxAbs * 1.1 || -1, hi = maxAbs * 1.1 || 1;
-      const yFn = (v) => marginTop + plotH - ((v - lo) / (hi - lo)) * plotH;
-      drawRefLine(yFn(0));
-      const pixelsPerInterval = (plotW / tSpan) * state.candleIntervalSeconds;
-      const barW = Math.max(1, Math.min(10, pixelsPerInterval * 0.6));
-      hist.forEach((v, i) => {
-        if (v == null) return;
-        const xx = xAt(i);
-        const top = yFn(Math.max(v, 0));
-        const bottom = yFn(Math.min(v, 0));
-        ctx.fillStyle = v >= 0 ? COLOR_UP : COLOR_DOWN;
-        ctx.fillRect(xx - barW / 2, top, barW, Math.max(1, bottom - top));
-      });
-      drawSeriesLine(ctx, xAt, yFn, dif, "#f2c94c");
-      drawSeriesLine(ctx, xAt, yFn, macd, "#64d8ff");
+      if (structural) {
+        subSeries.macdDif.setData(toLinePoints(candles, dif));
+        subSeries.macdSignal.setData(toLinePoints(candles, macd));
+        const histPoints = [];
+        for (let i = 0; i < candles.length; i++) {
+          if (hist[i] != null) histPoints.push({ time: candles[i].t, value: hist[i], color: hist[i] >= 0 ? COLOR_UP : COLOR_DOWN });
+        }
+        subSeries.macdHist.setData(histPoints);
+      } else {
+        updateLast(subSeries.macdDif, dif[dif.length - 1]);
+        updateLast(subSeries.macdSignal, macd[macd.length - 1]);
+        const h = hist[hist.length - 1];
+        if (h != null) subSeries.macdHist.update({ time: last.t, value: h, color: h >= 0 ? COLOR_UP : COLOR_DOWN });
+      }
       const dift = lastTrend(dif), macdt = lastTrend(macd);
       legend.innerHTML =
         legendEntry("#f2c94c", `DIF ${dift ? fmt(dift.value, 1) + dift.arrow : "--"}`) +
         " " +
         legendEntry("#64d8ff", `MACD ${macdt ? fmt(macdt.value, 1) + macdt.arrow : "--"}`);
     }
+  }
+
+  // Custom OHLC/price tooltip that follows the native crosshair — the
+  // library draws the crosshair itself but leaves tooltip content to the
+  // host page (see the "tooltips" tutorial this follows).
+  function handleCrosshairMove(param) {
+    const tip = $("chart-tooltip");
+    if (!param.point || param.time === undefined) {
+      tip.classList.add("hidden");
+      return;
+    }
+    const isCandle = state.chartMode === "candle";
+    const series = isCandle ? candleSeries : areaSeries;
+    const data = param.seriesData.get(series);
+    if (!data) {
+      tip.classList.add("hidden");
+      return;
+    }
+    tip.innerHTML = isCandle
+      ? `<div>${fmtTime(param.time)}</div><div>開 ${fmt(data.open, 1)}&nbsp;&nbsp;高 ${fmt(data.high, 1)}</div><div>低 ${fmt(data.low, 1)}&nbsp;&nbsp;收 ${fmt(data.close, 1)}</div>`
+      : `<div>${fmtTime(param.time)}</div><div>價格 ${fmt(data.value, 1)}</div>`;
+    tip.classList.remove("hidden");
+    const containerWidth = $("chart-container").clientWidth;
+    const xx = param.point.x;
+    tip.style.left = `${Math.max(4, xx > containerWidth - 130 ? xx - 120 : xx + 10)}px`;
   }
 
   async function api(path, opts) {
@@ -1358,17 +1193,15 @@
   $("position-modal").addEventListener("click", (e) => {
     if (e.target.id === "position-modal") hidePositionModal();
   });
-  window.addEventListener("resize", drawChart);
+  // No resize listener needed — the chart is created with autoSize: true.
 
   document.querySelectorAll(".chart-mode-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
       state.chartMode = btn.dataset.mode;
       document.querySelectorAll(".chart-mode-btn").forEach((b) => b.classList.toggle("active", b === btn));
-      $("chart-range-group").classList.toggle("hidden", state.chartMode !== "line");
       $("chart-interval-group").classList.toggle("hidden", state.chartMode !== "candle");
-      $("chart-candle-range-group").classList.toggle("hidden", state.chartMode !== "candle");
       updateIndicatorVisibility();
-      drawChart();
+      updateChart();
     });
   });
 
@@ -1376,15 +1209,7 @@
     btn.addEventListener("click", () => {
       state.candleIntervalSeconds = Number(btn.dataset.interval) * 60;
       document.querySelectorAll(".chart-interval-btn").forEach((b) => b.classList.toggle("active", b === btn));
-      drawChart();
-    });
-  });
-
-  document.querySelectorAll(".chart-candle-range-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      state.candleRangeSeconds = Number(btn.dataset.candleRange) * 60;
-      document.querySelectorAll(".chart-candle-range-btn").forEach((b) => b.classList.toggle("active", b === btn));
-      drawChart();
+      updateChart();
     });
   });
 
@@ -1392,14 +1217,14 @@
     state.bbandsOn = !state.bbandsOn;
     $("bbands-toggle").classList.toggle("active", state.bbandsOn);
     saveIndicatorPrefs();
-    drawChart();
+    updateChart();
   });
 
   $("chart-subpanel-select").addEventListener("change", (e) => {
     state.subpanel = e.target.value;
     saveIndicatorPrefs();
     updateIndicatorVisibility();
-    drawChart();
+    updateChart();
   });
 
   document.querySelectorAll(".chart-session-btn").forEach((btn) => {
@@ -1408,74 +1233,15 @@
       state.sessionManual = true;
       syncSessionButtons();
       renderSessionStats();
-      drawChart();
+      updateChart();
     });
-  });
-
-  document.querySelectorAll(".chart-range-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      state.lineRangeSeconds = Number(btn.dataset.range) * 60;
-      document.querySelectorAll(".chart-range-btn").forEach((b) => b.classList.toggle("active", b === btn));
-      drawChart();
-    });
-  });
-  document.querySelector(`.chart-range-btn[data-range="15"]`).classList.add("active");
-
-  const chartCanvas = $("chart");
-  // Shared by mouse hover, click-to-pin, and touch: maps a viewport x
-  // coordinate to the nearest plotted point's index.
-  function indexFromClientX(clientX) {
-    const rect = chartCanvas.getBoundingClientRect();
-    const mx = clientX - rect.left;
-    const { plotW, tStart, tSpan, ts } = state.lastLayout;
-    const frac = Math.min(Math.max(mx / plotW, 0), 1);
-    return findNearestIndexByTime(ts, tStart + frac * tSpan);
-  }
-
-  chartCanvas.addEventListener("mousemove", (e) => {
-    // A pinned point (from a click) freezes the crosshair/tooltip until the
-    // user unpins it — plain hover shouldn't fight with that.
-    if (!state.lastLayout || state.pinnedIndex !== null) return;
-    state.hoverIndex = indexFromClientX(e.clientX);
-    drawChart();
-  });
-  chartCanvas.addEventListener("mouseleave", () => {
-    if (state.pinnedIndex !== null) return;
-    state.hoverIndex = null;
-    drawChart();
-  });
-  chartCanvas.addEventListener("click", (e) => {
-    if (!state.lastLayout) return;
-    const idx = indexFromClientX(e.clientX);
-    // Clicking the already-pinned point unpins it; clicking elsewhere on
-    // the chart moves the pin there.
-    state.pinnedIndex = state.pinnedIndex === idx ? null : idx;
-    drawChart();
-  });
-  // Touch devices have no hover state, so a touch pins the tooltip directly
-  // (rather than mirroring mousemove's live-preview-then-clear behavior) —
-  // it stays visible after the finger lifts, same as a click.
-  const handleChartTouch = (e) => {
-    if (!state.lastLayout) return;
-    const touch = e.touches[0];
-    if (!touch) return;
-    state.pinnedIndex = indexFromClientX(touch.clientX);
-    drawChart();
-    e.preventDefault();
-  };
-  chartCanvas.addEventListener("touchstart", handleChartTouch, { passive: false });
-  chartCanvas.addEventListener("touchmove", handleChartTouch, { passive: false });
-  document.addEventListener("click", (e) => {
-    if (state.pinnedIndex !== null && !chartCanvas.contains(e.target)) {
-      state.pinnedIndex = null;
-      drawChart();
-    }
   });
 
   document.querySelectorAll(".record-tab-btn").forEach((btn) => {
     btn.addEventListener("click", () => setRecordTab(btn.dataset.recordTab));
   });
 
+  initChart();
   loadIndicatorPrefs();
   $("bbands-toggle").classList.toggle("active", state.bbandsOn);
   $("chart-subpanel-select").value = state.subpanel;
