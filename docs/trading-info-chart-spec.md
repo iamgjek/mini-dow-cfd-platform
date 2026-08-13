@@ -40,16 +40,16 @@
 
 現況落差說明(對照 `frontend/app.js`):
 
-- **時間區間**:線圖模式已經有 `state.lineRangeSeconds`(5/15/30/60 分鐘,`.chart-range-btn`)控制顯示視窗;但 K 線模式沒有對應的顯示區間設定 —— `drawChart()` 裡 K 棒是直接用整個 `sessionBlock.points` 建出來的(`buildCandles(sessionPoints, ...)`),盤中資料量越多,K 線圖上的棒子就越擠,沒辦法只看「最近 1 小時」
+- ~~**時間區間**:線圖模式已經有 `state.lineRangeSeconds`...~~ 已撤銷,見下方 P0-4 的說明——顯示區間後來交給 TradingView Lightweight Charts 原生的縮放/平移處理,不再用按鈕預先過濾資料
 - **X/Y 軸顯示**:Y 軸目前用固定 4 等分(`for (let i = 0; i <= 4; i++)`)畫水平網格線 + 價格刻度,但**X 軸只有文字時間標籤(最多 5 個),沒有對應的垂直網格線**,兩軸的視覺完整度不一致;另外現價(`tick.mid`)目前只在報價列顯示,圖表上沒有一條跟著報價移動的現價參考線,使用者要對照現價在圖表哪個高度得自己目測
 - **點擊顯示資訊**:目前只綁了 `chartCanvas.addEventListener("mousemove", ...)` 和 `mouseleave`,完全沒有 `click`/`touchstart`/`touchmove` 事件 —— **觸控裝置(手機、平板)沒有 hover 這個概念,所以在觸控裝置上完全看不到十字線與 OHLC/價格提示框**,這是目前互動設計對觸控裝置的一個明確缺口,不是「錦上添花」而是「功能在觸控裝置上根本用不了」
 
 ### P0(必須做)
 
-**P0-4:K 線模式加上顯示區間選擇**
-- 比照線圖模式的 `.chart-range-btn`,新增一組獨立的 K 線顯示區間選項(建議:近 1 小時 / 近 2 小時 / 近 4 小時 / 全部),與「K 棒週期」(`.chart-interval-btn`,決定每根棒子代表多久)分開設定,兩者互不影響
-- 驗收標準:Given 使用者在 K 線模式選擇「近 1 小時」,When 圖表重繪,Then 畫面上只顯示 `sessionBlock.points` 裡最近 1 小時內的 K 棒,更早的 K 棒不繪製;When 使用者切回「全部」,Then 顯示整個盤次目前累積的所有 K 棒(維持現況行為)
-- 選項要能涵蓋日盤(5 小時)與夜盤(最長約 14 小時)的合理子區間,兩種盤次共用同一組按鈕,不需要依盤次動態改變選項
+**P0-4:K 線模式加上顯示區間選擇 ⚠️ 已撤銷,改用 TradingView Lightweight Charts 原生縮放**
+- ~~比照線圖模式的 `.chart-range-btn`,新增一組獨立的 K 線顯示區間選項...~~
+- 圖表引擎後來整個換成 [TradingView Lightweight Charts](https://github.com/tradingview/lightweight-charts)(見下方時程考量的補充說明),原本手刻的「近1小時/近2小時/近4小時/全部」按鈕跟線圖模式的「5/15/30/60分」按鈕,其實是在跟 Lightweight Charts 原生就有的滑鼠滾輪縮放/拖曳平移搶著決定「現在要看哪一段」——兩邊各自維護一份「目前顯示範圍」的概念,使用者縮放後下一個 tick 一來,自製的按鈕邏輯又把畫面拉回「按鈕設定的那個範圍」,體感上像是縮放被「彈回去」。改成不再預先過濾資料、把整個盤次的資料都交給圖表,由圖表原生的縮放/平移決定要看哪一段;新 tick 進來時改用 `series.update()` 只接上最新一筆,不再整批 `setData()` + `fitContent()`,使用者縮放/平移的狀態才不會被每一個 tick 打斷。只有真的換了資料集(切換日盤/夜盤、線圖/K線、K棒週期、開關指標)才會重新 `fitContent()` 把畫面框回全貌
+- `.chart-range-btn`/`.chart-candle-range-btn` 兩組按鈕與對應的 `state.lineRangeSeconds`/`state.candleRangeSeconds` 已從 `frontend/index.html`/`frontend/app.js` 移除
 
 **P0-5:X 軸補上垂直網格線**
 - X 軸的每個時間刻度(目前 `labelCount = Math.min(5, n)` 那組)都對應畫一條淺色垂直網格線,線的樣式(顏色、透明度)比照現有 Y 軸網格線,讓兩軸視覺一致
