@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -9,7 +10,7 @@ from fastapi import Depends, FastAPI, HTTPException, Response, WebSocket, WebSoc
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import auth, config, db, rollover
+from . import auth, config, db, history_store, rollover
 from .engine_manager import EngineManager
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -35,7 +36,11 @@ _main_loop: Optional[asyncio.AbstractEventLoop] = None
 
 def _serialize(payload: object):
     if isinstance(payload, Tick):
-        return {"ts": payload.ts, "mid": payload.mid, "bid": payload.bid, "ask": payload.ask}
+        return {
+            "ts": payload.ts, "mid": payload.mid, "bid": payload.bid, "ask": payload.ask,
+            "bid_levels": [list(level) for level in payload.bid_levels],
+            "ask_levels": [list(level) for level in payload.ask_levels],
+        }
     if isinstance(payload, BaseModel):
         return json.loads(payload.model_dump_json())
     return payload
@@ -76,9 +81,11 @@ async def lifespan(app: FastAPI):
     _main_loop = asyncio.get_event_loop()
     feed_task = asyncio.create_task(price_engine.run())
     rollover_task = asyncio.create_task(rollover.run_rollover_loop(engine_manager, price_engine, _broadcast_to_all))
+    history_task = asyncio.create_task(history_store.run_history_flush_loop(price_engine))
     yield
     feed_task.cancel()
     rollover_task.cancel()
+    history_task.cancel()
 
 
 app = FastAPI(title="Micro TAIEX (微小台指) Paper Trading Platform", lifespan=lifespan)
@@ -176,9 +183,26 @@ def get_instrument():
     }
 
 
+# If the in-memory deque doesn't reach back this far, it's treated as
+# "thin" (e.g. right after a restart) and backfilled from price_history —
+# see docs/trading-info-chart-spec.md P0-16.
+HISTORY_BACKFILL_THRESHOLD_SECONDS = 3600
+HISTORY_BACKFILL_WINDOW_SECONDS = 48 * 3600
+
+
 @app.get("/api/history")
 def get_history():
-    return [{"ts": ts, "price": price} for ts, price in price_engine.history]
+    memory_points = [{"ts": ts, "price": price} for ts, price in price_engine.history]
+    now = time.time()
+    earliest = memory_points[0]["ts"] if memory_points else now
+    # How far back in-memory history actually reaches. Large enough already
+    # (deque has been accumulating a while) → no need to hit the DB at all.
+    if now - earliest >= HISTORY_BACKFILL_THRESHOLD_SECONDS:
+        return memory_points
+
+    db_rows = db.get_price_history(price_engine.symbol, now - HISTORY_BACKFILL_WINDOW_SECONDS)
+    db_points = [{"ts": row["bucket_ts"], "price": row["price"]} for row in db_rows if row["bucket_ts"] < earliest]
+    return db_points + memory_points
 
 
 @app.get("/api/account")

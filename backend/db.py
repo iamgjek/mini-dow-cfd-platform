@@ -119,6 +119,17 @@ SCHEMA_STATEMENTS = [
         ts DOUBLE PRECISION NOT NULL
     )
     """,
+    # One row per (symbol, minute) — a low-frequency durability net for the
+    # in-memory price_engine.history deque, not a tick-level archive. See
+    # docs/trading-info-chart-spec.md P0-14.
+    """
+    CREATE TABLE IF NOT EXISTS price_history (
+        symbol TEXT NOT NULL,
+        bucket_ts DOUBLE PRECISION NOT NULL,
+        price DOUBLE PRECISION NOT NULL,
+        PRIMARY KEY (symbol, bucket_ts)
+    )
+    """,
 ]
 
 
@@ -281,6 +292,32 @@ def list_trades(user_id: int, limit: int = 100) -> list[dict]:
     return _execute(
         "SELECT * FROM trades WHERE user_id = %s ORDER BY id DESC LIMIT %s", (user_id, limit)
     ).fetchall()
+
+
+# --- price history (durability net for price_engine.history) ----------------
+
+def upsert_price_points(symbol: str, points: list[tuple[float, float]]) -> None:
+    """`points` is a small batch — the last minute or two, not the full
+    history — so a plain per-row loop is fine here; this runs off the live
+    quote path on a low-frequency background timer (see history_store.py),
+    never per-tick."""
+    for bucket_ts, price in points:
+        _execute(
+            "INSERT INTO price_history (symbol, bucket_ts, price) VALUES (%s, %s, %s) "
+            "ON CONFLICT (symbol, bucket_ts) DO UPDATE SET price = EXCLUDED.price",
+            (symbol, bucket_ts, price),
+        )
+
+
+def get_price_history(symbol: str, since_ts: float) -> list[dict]:
+    return _execute(
+        "SELECT bucket_ts, price FROM price_history WHERE symbol = %s AND bucket_ts >= %s ORDER BY bucket_ts",
+        (symbol, since_ts),
+    ).fetchall()
+
+
+def prune_price_history(before_ts: float) -> None:
+    _execute("DELETE FROM price_history WHERE bucket_ts < %s", (before_ts,))
 
 
 def platform_stats() -> dict[str, Any]:

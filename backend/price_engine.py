@@ -10,12 +10,21 @@ from . import config
 logger = logging.getLogger("price_engine")
 
 
+# Field layout confirmed by sampling the raw feed directly (see
+# docs/trading-info-chart-spec.md P1-1 未解決問題): fields 15-19 are the 5
+# bid price levels (best first, descending) with matching quantities at
+# 20-24; 25-29/30-34 are the mirror image for asks (best first, ascending).
+DEPTH_LEVELS = 5
+
+
 @dataclass(frozen=True)
 class Tick:
     ts: float
     mid: float
     bid: float
     ask: float
+    bid_levels: Tuple[Tuple[float, float], ...] = ()
+    ask_levels: Tuple[Tuple[float, float], ...] = ()
 
 
 class PriceEngine:
@@ -33,6 +42,8 @@ class PriceEngine:
         self.mid: float = 0.0
         self.bid: float = 0.0
         self.ask: float = 0.0
+        self.bid_levels: Tuple[Tuple[float, float], ...] = ()
+        self.ask_levels: Tuple[Tuple[float, float], ...] = ()
         self.history: Deque[Tuple[float, float]] = deque(maxlen=config.MAX_TICK_HISTORY)
         self._listeners: List[Callable[[Tick], None]] = []
 
@@ -44,7 +55,10 @@ class PriceEngine:
             self._listeners.remove(callback)
 
     def latest_tick(self) -> Tick:
-        return Tick(ts=time.time(), mid=self.mid, bid=self.bid, ask=self.ask)
+        return Tick(
+            ts=time.time(), mid=self.mid, bid=self.bid, ask=self.ask,
+            bid_levels=self.bid_levels, ask_levels=self.ask_levels,
+        )
 
     def set_symbol(self, new_symbol: str) -> None:
         """Switch which feed symbol this engine tracks (contract rollover).
@@ -59,7 +73,21 @@ class PriceEngine:
         self.mid = 0.0
         self.bid = 0.0
         self.ask = 0.0
+        self.bid_levels = ()
+        self.ask_levels = ()
         self.history.clear()
+
+    @staticmethod
+    def _parse_levels(parts: list, price_start: int, qty_start: int) -> Tuple[Tuple[float, float], ...]:
+        levels = []
+        for i in range(DEPTH_LEVELS):
+            try:
+                price = float(parts[price_start + i])
+                qty = float(parts[qty_start + i])
+            except (ValueError, IndexError):
+                price, qty = 0.0, 0.0
+            levels.append((price, qty))
+        return tuple(levels)
 
     def _connect_string(self) -> str:
         if not config.TF_USERNAME or not config.TF_PASSWORD:
@@ -95,10 +123,15 @@ class PriceEngine:
         self.mid = last
         self.bid = bid if bid > 0 else last
         self.ask = ask if ask > 0 else last
+        self.bid_levels = self._parse_levels(parts, price_start=15, qty_start=20)
+        self.ask_levels = self._parse_levels(parts, price_start=25, qty_start=30)
         now = time.time()
         self.history.append((now, self.mid))
 
-        tick = Tick(ts=now, mid=self.mid, bid=self.bid, ask=self.ask)
+        tick = Tick(
+            ts=now, mid=self.mid, bid=self.bid, ask=self.ask,
+            bid_levels=self.bid_levels, ask_levels=self.ask_levels,
+        )
         for listener in list(self._listeners):
             listener(tick)
 
