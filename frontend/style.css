@@ -51,6 +51,15 @@ header .symbol { color: var(--muted); font-size: 13px; }
   border: 1px solid #5a4a1a;
 }
 
+.session-badge {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 10px;
+  background: #17233a;
+  color: var(--accent);
+  border: 1px solid #2a3f66;
+}
+
 .price-readout { display: flex; gap: 12px; align-items: center; }
 .price-readout .mid-row { display: flex; align-items: baseline; gap: 8px; }
 .price-readout .mid { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
@@ -73,6 +82,17 @@ header .symbol { color: var(--muted); font-size: 13px; }
 .ba-item .ba-label { font-size: 9px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; opacity: 0.8; }
 .ba-item.bid { background: rgba(255, 92, 92, 0.14); color: var(--price-up); }
 .ba-item.ask { background: rgba(61, 220, 132, 0.14); color: var(--price-down); }
+
+.price-readout .ohl { display: flex; gap: 10px; }
+.ohl-item {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.ohl-item .ohl-label { font-size: 10px; color: var(--muted); }
 
 .status-dot {
   width: 8px; height: 8px; border-radius: 50%;
@@ -140,10 +160,34 @@ main {
 }
 .chart-range-btn.active, .chart-interval-btn.active, .chart-candle-range-btn.active { background: var(--panel-alt); color: var(--text); border-color: #3a4356; }
 
+.chart-bbands-toggle {
+  padding: 4px 9px;
+  font-size: 11px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.chart-bbands-toggle.active { background: var(--panel-alt); color: var(--text); border-color: #3a4356; }
+.chart-subpanel-select {
+  padding: 3px 6px;
+  font-size: 11px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--panel-alt);
+  color: var(--text);
+  cursor: pointer;
+}
+
 .chart-legend { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 
 .chart-canvas-wrap { position: relative; }
 canvas#chart { width: 100%; height: 340px; display: block; cursor: crosshair; }
+
+.chart-subpanel-wrap { margin-top: 8px; }
+.chart-subpanel-wrap .chart-legend { margin-bottom: 4px; }
+canvas#chart-subpanel { width: 100%; height: 110px; display: block; }
 
 .chart-tooltip {
   position: absolute;
@@ -160,6 +204,24 @@ canvas#chart { width: 100%; height: 340px; display: block; cursor: crosshair; }
 }
 .chart-tooltip.hidden { display: none; }
 
+.session-toast {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #17233a;
+  color: var(--accent);
+  border: 1px solid #2a3f66;
+  border-radius: 10px;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.4s ease;
+}
+.session-toast.visible { opacity: 1; }
+
 .sidebar { display: flex; flex-direction: column; gap: 14px; }
 
 .stat-grid {
@@ -172,6 +234,33 @@ canvas#chart { width: 100%; height: 340px; display: block; cursor: crosshair; }
 
 .up { color: var(--price-up); }
 .down { color: var(--price-down); }
+
+.depth-ladder { display: flex; flex-direction: column; gap: 1px; font-size: 12px; }
+.depth-side { display: flex; flex-direction: column; gap: 1px; }
+.depth-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  padding: 2px 6px;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  border-radius: 3px;
+}
+.depth-row .depth-price { font-weight: 600; z-index: 1; }
+.depth-row .depth-qty { text-align: right; color: var(--muted); z-index: 1; }
+.depth-row.ask .depth-price { color: var(--price-down); }
+.depth-row.bid .depth-price { color: var(--price-up); }
+.depth-bar {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 0;
+}
+.depth-row.ask .depth-bar { background: rgba(61, 220, 132, 0.12); }
+.depth-row.bid .depth-bar { background: rgba(255, 92, 92, 0.12); }
+.depth-mid-gap { height: 6px; }
+.depth-empty { color: var(--muted); font-size: 12px; }
 
 .tabs { display: flex; gap: 6px; margin-bottom: 10px; }
 .tab-btn {

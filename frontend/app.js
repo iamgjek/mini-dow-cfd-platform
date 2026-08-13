@@ -26,6 +26,11 @@
     // Auto-follows the live session until the user manually picks one.
     session: "day",
     sessionManual: false,
+    // Technical indicators (K線 only). Bollinger overlays the main chart;
+    // subpanel is a single switchable panel (KD/MACD/RSI), not simultaneous
+    // multiple panels — see docs/trading-info-chart-spec.md P0-11/P0-12.
+    bbandsOn: false,
+    subpanel: "off", // "off" | "kd" | "macd" | "rsi"
   };
 
   // Taiwan market convention is the reverse of the US one used elsewhere in
@@ -119,6 +124,63 @@
     });
   }
 
+  // Quote-header badge + 開/高/低 for whichever session is currently shown —
+  // shares the same `state.session` and `findSessionBlock` the chart legend
+  // already uses, so the two never disagree on which session is "current".
+  function renderSessionStats() {
+    $("session-badge").textContent = state.session === "night" ? "夜盤" : "日盤";
+    const points = findSessionBlock(state.history, state.session).points;
+    if (!points.length) {
+      $("price-open").textContent = "--";
+      $("price-high").textContent = "--";
+      $("price-low").textContent = "--";
+      return;
+    }
+    const prices = points.map((p) => p.price);
+    $("price-open").textContent = fmt(points[0].price, 1);
+    $("price-high").textContent = fmt(Math.max(...prices), 1);
+    $("price-low").textContent = fmt(Math.min(...prices), 1);
+  }
+
+  // Only fired when the session flips automatically (not from a manual
+  // 日盤/夜盤 button click) — a real-time price feed doesn't announce a
+  // session boundary any other way, so without this the quote/chart would
+  // just look "stuck" for a moment right at the handover.
+  let sessionToastTimer = null;
+  function showSessionToast(text) {
+    const el = $("session-toast");
+    el.textContent = text;
+    el.classList.add("visible");
+    clearTimeout(sessionToastTimer);
+    sessionToastTimer = setTimeout(() => el.classList.remove("visible"), 3000);
+  }
+
+  const INDICATOR_PREFS_KEY = "chartIndicators";
+
+  function loadIndicatorPrefs() {
+    try {
+      const prefs = JSON.parse(localStorage.getItem(INDICATOR_PREFS_KEY));
+      if (!prefs) return;
+      if (typeof prefs.bbandsOn === "boolean") state.bbandsOn = prefs.bbandsOn;
+      if (["off", "kd", "macd", "rsi"].includes(prefs.subpanel)) state.subpanel = prefs.subpanel;
+    } catch {
+      // malformed/absent localStorage entry — keep the defaults
+    }
+  }
+
+  function saveIndicatorPrefs() {
+    localStorage.setItem(INDICATOR_PREFS_KEY, JSON.stringify({ bbandsOn: state.bbandsOn, subpanel: state.subpanel }));
+  }
+
+  // K線-only controls (布林通道 toggle + 副圖 select) only make sense in
+  // candle mode; the subpanel additionally only shows when a series is
+  // actually selected. Called whenever chartMode or subpanel changes.
+  function updateIndicatorVisibility() {
+    const isCandle = state.chartMode === "candle";
+    $("chart-indicator-group").classList.toggle("hidden", !isCandle);
+    $("chart-subpanel-wrap").classList.toggle("hidden", !isCandle || state.subpanel === "off");
+  }
+
   async function bootstrapAuth() {
     const res = await fetch("/api/auth/me");
     if (!res.ok) {
@@ -183,6 +245,7 @@
         if (state.session === "closed") state.session = "day";
         state.sessionManual = false;
         syncSessionButtons();
+        renderSessionStats();
         if (d.tick && d.tick.mid) renderPrice(d.tick);
         state.account = d.account;
         state.position = d.position;
@@ -198,7 +261,9 @@
         if (!state.sessionManual && info.session !== "closed" && info.session !== state.session) {
           state.session = info.session;
           syncSessionButtons();
+          showSessionToast(info.session === "night" ? "已轉為夜盤" : "已轉為日盤");
         }
+        renderSessionStats(); // 開/高/低 can extend on every tick, not just on session change
         renderPrice(msg.data);
         drawChart();
         renderHoldings(); // live unrealized P&L per lot depends on the current price
@@ -241,12 +306,14 @@
         state.session = "day";
         state.sessionManual = false;
         syncSessionButtons();
+        renderSessionStats();
         state.lastTick = null;
         $("price-mid").textContent = "--";
         $("price-bid").textContent = "--";
         $("price-ask").textContent = "--";
         $("price-chg").textContent = "--";
         $("price-chg").className = "chg";
+        renderDepth(null);
         drawChart();
         break;
       }
@@ -267,11 +334,35 @@
     drawChart();
   }
 
+  // 五檔委買委賣 — bar width scaled to the largest quantity currently shown
+  // across both sides, so relative size at a glance means something.
+  function renderDepth(tick) {
+    const wrap = $("depth-ladder");
+    if (!tick || !tick.ask_levels || !tick.ask_levels.length || !tick.bid_levels || !tick.bid_levels.length) {
+      wrap.innerHTML = '<div class="depth-empty">尚無五檔資料</div>';
+      return;
+    }
+    const maxQty = Math.max(1, ...tick.bid_levels.map((l) => l[1]), ...tick.ask_levels.map((l) => l[1]));
+    const row = (level, cls) => {
+      const [price, qty] = level;
+      const pct = Math.round((qty / maxQty) * 100);
+      return `<div class="depth-row ${cls}"><span class="depth-bar" style="width:${pct}%"></span><span class="depth-price">${fmt(price, 1)}</span><span class="depth-qty">${qty}</span></div>`;
+    };
+    // Farthest ask at the top, best ask just above the gap, best bid just
+    // below it, farthest bid at the bottom — the usual depth-ladder order.
+    const asksTopDown = [...tick.ask_levels].reverse();
+    wrap.innerHTML =
+      `<div class="depth-side">${asksTopDown.map((l) => row(l, "ask")).join("")}</div>` +
+      `<div class="depth-mid-gap"></div>` +
+      `<div class="depth-side">${tick.bid_levels.map((l) => row(l, "bid")).join("")}</div>`;
+  }
+
   function renderPrice(tick) {
     state.lastTick = tick;
     $("price-mid").textContent = fmt(tick.mid, 1);
     $("price-bid").textContent = fmt(tick.bid, 1);
     $("price-ask").textContent = fmt(tick.ask, 1);
+    renderDepth(tick);
 
     const chgEl = $("price-chg");
     const info = taipeiClassify(tick.ts);
@@ -523,6 +614,131 @@
     return out;
   }
 
+  // Standard EMA, seeded with a plain SMA over the first `period` values
+  // (the conventional way to start an EMA without a longer runway of data).
+  function ema(values, period) {
+    const out = new Array(values.length).fill(null);
+    const k = 2 / (period + 1);
+    let sum = 0, prev = null;
+    for (let i = 0; i < values.length; i++) {
+      if (i < period - 1) {
+        sum += values[i];
+        continue;
+      }
+      if (i === period - 1) {
+        sum += values[i];
+        prev = sum / period;
+      } else {
+        prev = values[i] * k + prev * (1 - k);
+      }
+      out[i] = prev;
+    }
+    return out;
+  }
+
+  // Runs `ema` on the non-null tail of a series (e.g. MACD's DIF line,
+  // which is null until both its underlying EMAs have warmed up) and pads
+  // the result back out to the original length.
+  function emaOnTail(values, period) {
+    const out = new Array(values.length).fill(null);
+    const firstValid = values.findIndex((v) => v != null);
+    if (firstValid === -1) return out;
+    ema(values.slice(firstValid), period).forEach((v, i) => { out[firstValid + i] = v; });
+    return out;
+  }
+
+  // KD (隨機指標). Defaults 9,3,3 match docs/chart-technical-indicators-spec.md.
+  function computeKD(candles, rsvPeriod = 9, kSmooth = 3, dSmooth = 3) {
+    const k = new Array(candles.length).fill(null);
+    const d = new Array(candles.length).fill(null);
+    let prevK = 50, prevD = 50; // conventional neutral seed for the first calculable bar
+    for (let i = rsvPeriod - 1; i < candles.length; i++) {
+      let hh = -Infinity, ll = Infinity;
+      for (let j = i - rsvPeriod + 1; j <= i; j++) {
+        hh = Math.max(hh, candles[j].h);
+        ll = Math.min(ll, candles[j].l);
+      }
+      const rsv = hh === ll ? 50 : ((candles[i].c - ll) / (hh - ll)) * 100;
+      prevK = (prevK * (kSmooth - 1) + rsv) / kSmooth;
+      prevD = (prevD * (dSmooth - 1) + prevK) / dSmooth;
+      k[i] = prevK;
+      d[i] = prevD;
+    }
+    return { k, d };
+  }
+
+  // MACD. Defaults 12,26,9. `macd` here is the 訊號線/signal line (EMA of
+  // DIF) — matches the naming in docs/chart-technical-indicators-spec.md.
+  function computeMACD(candles, fast = 12, slow = 26, signal = 9) {
+    const closes = candles.map((c) => c.c);
+    const emaFast = ema(closes, fast);
+    const emaSlow = ema(closes, slow);
+    const dif = closes.map((_, i) => (emaFast[i] != null && emaSlow[i] != null ? emaFast[i] - emaSlow[i] : null));
+    const macd = emaOnTail(dif, signal);
+    const hist = dif.map((v, i) => (v != null && macd[i] != null ? v - macd[i] : null));
+    return { dif, macd, hist };
+  }
+
+  // RSI, Wilder's smoothing. Default period 14.
+  function computeRSI(candles, period = 14) {
+    const closes = candles.map((c) => c.c);
+    const out = new Array(closes.length).fill(null);
+    let avgGain = 0, avgLoss = 0;
+    for (let i = 1; i < closes.length; i++) {
+      const change = closes[i] - closes[i - 1];
+      const gain = Math.max(change, 0), loss = Math.max(-change, 0);
+      if (i < period) {
+        avgGain += gain;
+        avgLoss += loss;
+        continue;
+      }
+      if (i === period) {
+        avgGain = (avgGain + gain) / period;
+        avgLoss = (avgLoss + loss) / period;
+      } else {
+        avgGain = (avgGain * (period - 1) + gain) / period;
+        avgLoss = (avgLoss * (period - 1) + loss) / period;
+      }
+      out[i] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+    }
+    return out;
+  }
+
+  // Bollinger Bands. Default 20-period SMA ± 2 standard deviations.
+  function computeBollinger(candles, period = 20, mult = 2) {
+    const closes = candles.map((c) => c.c);
+    const mid = sma(closes, period);
+    const upper = new Array(closes.length).fill(null);
+    const lower = new Array(closes.length).fill(null);
+    for (let i = period - 1; i < closes.length; i++) {
+      let sumSq = 0;
+      for (let j = i - period + 1; j <= i; j++) sumSq += (closes[j] - mid[i]) ** 2;
+      const sd = Math.sqrt(sumSq / period);
+      upper[i] = mid[i] + mult * sd;
+      lower[i] = mid[i] - mult * sd;
+    }
+    return { mid, upper, lower };
+  }
+
+  // Last non-null value in a series (e.g. an MA) plus an arrow comparing it
+  // to the previous non-null value — used for legend readouts. Returns null
+  // if the series has no data yet (still in its warmup period).
+  function lastTrend(values) {
+    let lastIdx = -1;
+    for (let i = values.length - 1; i >= 0; i--) {
+      if (values[i] != null) { lastIdx = i; break; }
+    }
+    if (lastIdx === -1) return null;
+    let prevIdx = -1;
+    for (let i = lastIdx - 1; i >= 0; i--) {
+      if (values[i] != null) { prevIdx = i; break; }
+    }
+    const value = values[lastIdx];
+    const prev = prevIdx === -1 ? null : values[prevIdx];
+    const arrow = prev == null ? "" : value > prev ? "▲" : value < prev ? "▼" : "";
+    return { value, arrow };
+  }
+
   // Values with `null` gaps (the MA warmup period) break the line rather
   // than drawing a misleading segment down to zero.
   function drawSeriesLine(ctx, xFn, yFn, values, color) {
@@ -583,9 +799,85 @@
     return new Date(ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   }
 
-  function drawOverlayLine(ctx, plotW, yFn, lo, hi, value, color, label, visible) {
-    if (!visible || value === null || value === undefined || value < lo || value > hi) return;
-    const yy = yFn(value);
+  // Rounds a rough tick spacing to a "nice" 1/2/5 × 10ⁿ step, so axis
+  // labels land on numbers a human would pick rather than an arbitrary
+  // division of the visible range into N equal parts.
+  function niceStep(roughStep) {
+    if (!(roughStep > 0)) return 1;
+    const exp = Math.floor(Math.log10(roughStep));
+    const base = Math.pow(10, exp);
+    const frac = roughStep / base;
+    const niceFrac = frac < 1.5 ? 1 : frac < 3 ? 2 : frac < 7 ? 5 : 10;
+    return niceFrac * base;
+  }
+
+  // Candidate spacings for X-axis ticks, in seconds: 1/5/10/15/30 min,
+  // 1/2/4 hour — covers everything from a 5-minute line-chart window up to
+  // a full ~14h night session shown "全部".
+  const TIME_TICK_STEPS = [60, 300, 600, 900, 1800, 3600, 7200, 14400];
+  const TAIPEI_OFFSET_SECONDS = 8 * 3600;
+
+  // Picks a step that lands 4~6 ticks in [tStart, tEnd], then aligns them to
+  // real clock boundaries (on the minute/hour) instead of splitting the
+  // visible range into N even-but-arbitrary slices. Taiwan is fixed UTC+8
+  // with no DST, so aligning to local clock boundaries is just arithmetic —
+  // no need to round-trip through the Intl formatter taipeiClassify() uses.
+  function niceTimeTicks(tStart, tEnd) {
+    const span = tEnd - tStart || 1;
+    let step = TIME_TICK_STEPS[TIME_TICK_STEPS.length - 1];
+    for (const candidate of TIME_TICK_STEPS) {
+      if (span / candidate <= 6) {
+        step = candidate;
+        break;
+      }
+    }
+    const ticks = [];
+    let t = Math.ceil((tStart + TAIPEI_OFFSET_SECONDS) / step) * step - TAIPEI_OFFSET_SECONDS;
+    for (; t <= tEnd; t += step) {
+      if (t >= tStart) ticks.push(t);
+    }
+    return ticks;
+  }
+
+  // Nudges labels that would render too close together in Y apart, while
+  // leaving each item's reference line at its true price height (`y`) —
+  // only the label's own position (`labelY`) moves. Mutates and returns
+  // `items`, sorted top-to-bottom.
+  function declutterLabels(items, minGap) {
+    items.sort((a, b) => a.y - b.y);
+    items.forEach((it) => { it.labelY = it.y; });
+    for (let i = 1; i < items.length; i++) {
+      if (items[i].labelY - items[i - 1].labelY < minGap) {
+        items[i].labelY = items[i - 1].labelY + minGap;
+      }
+    }
+    return items;
+  }
+
+  // A solid, boxed label pinned to the right axis — used for 現價/昨收 so
+  // they read at a glance instead of blending into the plain-text overlay
+  // labels used for 均價/停損/停利 (drawOverlayLine). `labelY` may differ
+  // from `yy` (the line's true height) when declutterLabels nudged it.
+  function drawPriceTag(ctx, plotW, yy, labelY, color, label) {
+    ctx.setLineDash([5, 4]);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, yy);
+    ctx.lineTo(plotW, yy);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.font = "10px sans-serif";
+    const boxW = ctx.measureText(label).width + 8, boxH = 14;
+    ctx.fillStyle = color;
+    ctx.fillRect(plotW, labelY - boxH / 2, boxW, boxH);
+    ctx.fillStyle = "#0b0f17";
+    ctx.textBaseline = "middle";
+    ctx.fillText(label, plotW + 4, labelY + 1);
+    ctx.textBaseline = "alphabetic";
+  }
+
+  function drawOverlayLine(ctx, plotW, yy, labelY, color, label) {
     ctx.setLineDash([5, 4]);
     ctx.strokeStyle = color;
     ctx.lineWidth = 1;
@@ -596,7 +888,7 @@
     ctx.setLineDash([]);
     ctx.fillStyle = color;
     ctx.font = "10px sans-serif";
-    ctx.fillText(label, 4, yy - 3);
+    ctx.fillText(label, 4, labelY - 3);
   }
 
   function updateTooltip(isCandle, point, xx, w) {
@@ -646,12 +938,26 @@
     const lastCandleLive =
       isCandle && candles.length > 0 && nowSec < candles[candles.length - 1].t + state.candleIntervalSeconds;
 
+    // Computed up here (rather than down by the other chart-derived series)
+    // so the legend can show each MA's live value/arrow next to its dot.
+    const maSeries = isCandle
+      ? MA_STYLES.map((s) => ({ period: s.period, color: s.color, values: sma(candles.map((c) => c.c), s.period) }))
+      : [];
+
     const legendBits = [sessionLabelText(sessionBlock.blockKey, state.session)];
     if (isCandle) legendBits.push(`每根蠟燭 = ${minutesLabel(state.candleIntervalSeconds)}`);
     if (lastCandleLive) legendBits.push("最新K棒尚未收盤");
     $("chart-legend").innerHTML =
       legendBits.join(" · ") +
-      (isCandle ? MA_STYLES.map((s) => ` <span style="color:${s.color};">● MA${s.period}</span>`).join("") : "");
+      (isCandle
+        ? maSeries
+            .map((s) => {
+              const trend = lastTrend(s.values);
+              const text = trend ? `MA${s.period} ${fmt(trend.value, 1)}${trend.arrow}` : `MA${s.period}`;
+              return ` <span style="color:${s.color};">● ${text}</span>`;
+            })
+            .join("")
+        : "");
 
     const plotData = isCandle ? candles : linePoints;
     if (!plotData || plotData.length < 2) {
@@ -662,6 +968,7 @@
       ctx.textAlign = "center";
       ctx.fillText(`尚無${state.session === "night" ? "夜盤" : "日盤"}資料`, w / 2, h / 2);
       ctx.textAlign = "left";
+      clearSubpanel(); // otherwise it'd keep showing the previous session's stale render
       return;
     }
 
@@ -683,12 +990,15 @@
 
     state.lastLayout = { n, plotW, isCandle, tStart, tSpan, ts: plotData.map((_, i) => tOf(i)) };
 
-    const maSeries = isCandle
-      ? MA_STYLES.map((s) => ({ color: s.color, values: sma(candles.map((c) => c.c), s.period) }))
-      : [];
-
     const values = isCandle ? candles.flatMap((c) => [c.h, c.l]) : linePoints.map((p) => p.price);
     maSeries.forEach((s) => s.values.forEach((v) => { if (v != null) values.push(v); }));
+    // Computed here (not down by the candle-drawing code) so the bands are
+    // included when sizing the Y-axis range — otherwise they'd get clipped
+    // whenever price hugs one edge of the visible range.
+    const bbands = isCandle && state.bbandsOn ? computeBollinger(candles) : null;
+    if (bbands) {
+      [bbands.upper, bbands.lower].forEach((series) => series.forEach((v) => { if (v != null) values.push(v); }));
+    }
     if (sessionBlock.prevClose != null) values.push(sessionBlock.prevClose);
     // avg_price of 0 is never a real index price — a position stuck in that
     // state (e.g. a fill that slipped through before the feed had a real
@@ -705,12 +1015,15 @@
 
     const y = (v) => marginTop + plotH - ((v - lo) / (hi - lo)) * plotH;
 
+    // Y-axis ticks land on "nice" round numbers (1/2/5 × 10ⁿ apart) instead
+    // of splitting [lo, hi] into a fixed 4 equal — and usually decimal-ugly
+    // — slices.
+    const yStep = niceStep((hi - lo) / 4);
     ctx.strokeStyle = "#2a3140";
     ctx.lineWidth = 1;
     ctx.font = "11px sans-serif";
     ctx.fillStyle = "#8b96a5";
-    for (let i = 0; i <= 4; i++) {
-      const v = lo + ((hi - lo) * i) / 4;
+    for (let v = Math.ceil(lo / yStep) * yStep; v <= hi; v += yStep) {
       const yy = y(v);
       ctx.beginPath();
       ctx.moveTo(0, yy);
@@ -719,13 +1032,19 @@
       ctx.fillText(fmt(v, 1), plotW + 4, yy + 3);
     }
 
-    // Evenly spaced in *time*, not in point index, so the printed clock
-    // times are actually evenly spaced left-to-right. Each label gets a
-    // matching vertical gridline (drawn before candles/line so it sits
-    // underneath them), mirroring the horizontal Y-axis gridlines above.
-    const labelCount = Math.min(5, n);
-    for (let k = 0; k < labelCount; k++) {
-      const t = tStart + (tSpan * k) / (labelCount - 1 || 1);
+    // X-axis ticks land on real clock boundaries (see niceTimeTicks) rather
+    // than an even split of the visible time range. The bands between
+    // alternating ticks get a faint fill first (bottom layer), then
+    // gridlines + labels on top, all still before candles/line are drawn.
+    const xTicks = niceTimeTicks(tStart, tOf(n - 1));
+    const xBoundaries = [0, ...xTicks.map(xOfTime), plotW];
+    for (let k = 0; k < xBoundaries.length - 1; k++) {
+      if (k % 2 === 1) {
+        ctx.fillStyle = "rgba(255, 255, 255, 0.025)";
+        ctx.fillRect(xBoundaries[k], marginTop, xBoundaries[k + 1] - xBoundaries[k], plotH);
+      }
+    }
+    xTicks.forEach((t) => {
       const xx = xOfTime(t);
       ctx.strokeStyle = "#2a3140";
       ctx.lineWidth = 1;
@@ -736,7 +1055,7 @@
       ctx.fillStyle = "#8b96a5";
       ctx.font = "11px sans-serif";
       ctx.fillText(fmtClock(t), Math.min(Math.max(xx - 18, 0), plotW - 34), h - 4);
-    }
+    });
 
     if (isCandle) {
       // Width per candle is derived from time-per-pixel now that x is a
@@ -770,6 +1089,11 @@
         ctx.setLineDash([]);
       });
       maSeries.forEach((s) => drawSeriesLine(ctx, x, y, s.values, s.color));
+      if (bbands) {
+        drawSeriesLine(ctx, x, y, bbands.upper, "#7a88ad");
+        drawSeriesLine(ctx, x, y, bbands.mid, "#5a6684");
+        drawSeriesLine(ctx, x, y, bbands.lower, "#7a88ad");
+      }
     } else {
       // Color reflects gain/loss vs. 昨收 (previous same-type session's
       // close), matching how TW index/futures charts read — not just
@@ -793,12 +1117,33 @@
       ctx.fill();
     }
 
-    drawOverlayLine(ctx, plotW, y, lo, hi, sessionBlock.prevClose, "#8b96a5", `昨收 ${fmt(sessionBlock.prevClose, 1)}`, sessionBlock.prevClose != null);
+    // 昨收/現價 share the boxed-tag style on the right axis; collected first
+    // and run through declutterLabels so two close values don't print
+    // overlapping text (P1-4) — the dashed line itself still lands at the
+    // exact price height, only the label may be nudged.
+    const tagItems = [];
+    if (sessionBlock.prevClose != null && sessionBlock.prevClose >= lo && sessionBlock.prevClose <= hi) {
+      tagItems.push({ y: y(sessionBlock.prevClose), color: "#8b96a5", label: `昨收 ${fmt(sessionBlock.prevClose, 1)}` });
+    }
+    if (state.lastTick && state.lastTick.mid >= lo && state.lastTick.mid <= hi) {
+      // Colored by gain/loss vs 昨收 (or the session's first point when
+      // there's no 昨收 yet), same reference the line-mode fill color uses.
+      const refPrice = sessionBlock.prevClose != null ? sessionBlock.prevClose : plotData[0][isCandle ? "c" : "price"];
+      const tagColor = state.lastTick.mid >= refPrice ? COLOR_UP : COLOR_DOWN;
+      tagItems.push({ y: y(state.lastTick.mid), color: tagColor, label: fmt(state.lastTick.mid, 1) });
+    }
+    declutterLabels(tagItems, 16).forEach((it) => drawPriceTag(ctx, plotW, it.y, it.labelY, it.color, it.label));
 
+    // 均價/停損/停利 — same declutter treatment, plain-text style on the left.
     const pos = state.position;
-    drawOverlayLine(ctx, plotW, y, lo, hi, pos.avg_price, "#4f8cff", `均 ${fmt(pos.avg_price, 1)}`, hasValidPosition);
-    drawOverlayLine(ctx, plotW, y, lo, hi, pos.stop_loss, "#ff5c5c", `SL ${fmt(pos.stop_loss, 1)}`, hasValidPosition && pos.stop_loss != null && pos.stop_loss > 0);
-    drawOverlayLine(ctx, plotW, y, lo, hi, pos.take_profit, "#3ddc84", `TP ${fmt(pos.take_profit, 1)}`, hasValidPosition && pos.take_profit != null && pos.take_profit > 0);
+    const overlayItems = [];
+    const maybeAddOverlay = (value, color, label, visible) => {
+      if (visible && value != null && value >= lo && value <= hi) overlayItems.push({ y: y(value), color, label });
+    };
+    maybeAddOverlay(pos.avg_price, "#4f8cff", `均 ${fmt(pos.avg_price, 1)}`, hasValidPosition);
+    maybeAddOverlay(pos.stop_loss, "#ff5c5c", `SL ${fmt(pos.stop_loss, 1)}`, hasValidPosition && pos.stop_loss != null && pos.stop_loss > 0);
+    maybeAddOverlay(pos.take_profit, "#3ddc84", `TP ${fmt(pos.take_profit, 1)}`, hasValidPosition && pos.take_profit != null && pos.take_profit > 0);
+    declutterLabels(overlayItems, 14).forEach((it) => drawOverlayLine(ctx, plotW, it.y, it.labelY, it.color, it.label));
 
     const activeIndex = state.pinnedIndex !== null ? state.pinnedIndex : state.hoverIndex;
     if (activeIndex !== null && activeIndex < n) {
@@ -826,6 +1171,98 @@
       updateTooltip(isCandle, point, xx, w);
     } else {
       $("chart-tooltip").classList.add("hidden");
+    }
+
+    if (isCandle) drawSubpanel(candles, tStart, tSpan);
+  }
+
+  function clearSubpanel() {
+    const canvas = $("chart-subpanel");
+    canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height);
+    $("chart-subpanel-legend").innerHTML = "";
+  }
+
+  // KD/MACD/RSI share one panel, switched by a dropdown rather than shown
+  // as simultaneous stacked panels — see docs/trading-info-chart-spec.md
+  // P0-12. Reuses the main chart's time mapping (tStart/tSpan) so the two
+  // canvases' X axes line up pixel-for-pixel.
+  function drawSubpanel(candles, tStart, tSpan) {
+    if (state.subpanel === "off") return;
+    const canvas = $("chart-subpanel");
+    const legend = $("chart-subpanel-legend");
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width === 0) return;
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+    const ctx = canvas.getContext("2d");
+    ctx.scale(dpr, dpr);
+    const w = rect.width, h = rect.height;
+    ctx.clearRect(0, 0, w, h);
+
+    if (candles.length < 2) {
+      legend.innerHTML = "";
+      return;
+    }
+
+    const marginRight = 52, marginTop = 6, marginBottom = 4;
+    const plotW = w - marginRight, plotH = h - marginTop - marginBottom;
+    const xAt = (i) => ((candles[i].t - tStart) / tSpan) * plotW;
+
+    const drawRefLine = (yy) => {
+      ctx.setLineDash([3, 3]);
+      ctx.strokeStyle = "#2a3140";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(0, yy);
+      ctx.lineTo(plotW, yy);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    };
+    const legendEntry = (color, text) => `<span style="color:${color};">${text}</span>`;
+
+    if (state.subpanel === "kd") {
+      const { k, d } = computeKD(candles);
+      const yFn = (v) => marginTop + plotH - (v / 100) * plotH;
+      [20, 50, 80].forEach((v) => drawRefLine(yFn(v)));
+      drawSeriesLine(ctx, xAt, yFn, k, "#f2c94c");
+      drawSeriesLine(ctx, xAt, yFn, d, "#64d8ff");
+      const kt = lastTrend(k), dt = lastTrend(d);
+      legend.innerHTML =
+        legendEntry("#f2c94c", `K ${kt ? fmt(kt.value, 1) + kt.arrow : "--"}`) +
+        " " +
+        legendEntry("#64d8ff", `D ${dt ? fmt(dt.value, 1) + dt.arrow : "--"}`);
+    } else if (state.subpanel === "rsi") {
+      const rsi = computeRSI(candles);
+      const yFn = (v) => marginTop + plotH - (v / 100) * plotH;
+      [30, 50, 70].forEach((v) => drawRefLine(yFn(v)));
+      drawSeriesLine(ctx, xAt, yFn, rsi, "#bb86fc");
+      const t = lastTrend(rsi);
+      legend.innerHTML = legendEntry("#bb86fc", `RSI ${t ? fmt(t.value, 1) + t.arrow : "--"}`);
+    } else if (state.subpanel === "macd") {
+      const { dif, macd, hist } = computeMACD(candles);
+      const finite = [...dif, ...macd, ...hist].filter((v) => v != null).map(Math.abs);
+      const maxAbs = finite.length ? Math.max(...finite) : 1;
+      const lo = -maxAbs * 1.1 || -1, hi = maxAbs * 1.1 || 1;
+      const yFn = (v) => marginTop + plotH - ((v - lo) / (hi - lo)) * plotH;
+      drawRefLine(yFn(0));
+      const pixelsPerInterval = (plotW / tSpan) * state.candleIntervalSeconds;
+      const barW = Math.max(1, Math.min(10, pixelsPerInterval * 0.6));
+      hist.forEach((v, i) => {
+        if (v == null) return;
+        const xx = xAt(i);
+        const top = yFn(Math.max(v, 0));
+        const bottom = yFn(Math.min(v, 0));
+        ctx.fillStyle = v >= 0 ? COLOR_UP : COLOR_DOWN;
+        ctx.fillRect(xx - barW / 2, top, barW, Math.max(1, bottom - top));
+      });
+      drawSeriesLine(ctx, xAt, yFn, dif, "#f2c94c");
+      drawSeriesLine(ctx, xAt, yFn, macd, "#64d8ff");
+      const dift = lastTrend(dif), macdt = lastTrend(macd);
+      legend.innerHTML =
+        legendEntry("#f2c94c", `DIF ${dift ? fmt(dift.value, 1) + dift.arrow : "--"}`) +
+        " " +
+        legendEntry("#64d8ff", `MACD ${macdt ? fmt(macdt.value, 1) + macdt.arrow : "--"}`);
     }
   }
 
@@ -930,6 +1367,7 @@
       $("chart-range-group").classList.toggle("hidden", state.chartMode !== "line");
       $("chart-interval-group").classList.toggle("hidden", state.chartMode !== "candle");
       $("chart-candle-range-group").classList.toggle("hidden", state.chartMode !== "candle");
+      updateIndicatorVisibility();
       drawChart();
     });
   });
@@ -950,11 +1388,26 @@
     });
   });
 
+  $("bbands-toggle").addEventListener("click", () => {
+    state.bbandsOn = !state.bbandsOn;
+    $("bbands-toggle").classList.toggle("active", state.bbandsOn);
+    saveIndicatorPrefs();
+    drawChart();
+  });
+
+  $("chart-subpanel-select").addEventListener("change", (e) => {
+    state.subpanel = e.target.value;
+    saveIndicatorPrefs();
+    updateIndicatorVisibility();
+    drawChart();
+  });
+
   document.querySelectorAll(".chart-session-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
       state.session = btn.dataset.session;
       state.sessionManual = true;
       syncSessionButtons();
+      renderSessionStats();
       drawChart();
     });
   });
@@ -1022,6 +1475,11 @@
   document.querySelectorAll(".record-tab-btn").forEach((btn) => {
     btn.addEventListener("click", () => setRecordTab(btn.dataset.recordTab));
   });
+
+  loadIndicatorPrefs();
+  $("bbands-toggle").classList.toggle("active", state.bbandsOn);
+  $("chart-subpanel-select").value = state.subpanel;
+  updateIndicatorVisibility();
 
   setSide("BUY");
   toggleLimitField();

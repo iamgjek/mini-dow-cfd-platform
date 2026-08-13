@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>微小台指模擬交易平台</title>
-<link rel="stylesheet" href="style.css?v=4" />
+<link rel="stylesheet" href="style.css?v=8" />
 </head>
 <body>
 <header>
@@ -12,6 +12,7 @@
     <span class="status-dot" id="status-dot"></span>
     <h1 id="instrument-name">微小台指</h1>
     <span class="symbol" id="instrument-symbol">TFFITMQ+</span>
+    <span class="session-badge" id="session-badge">日盤</span>
     <span class="sim-badge">真實行情 · 模擬下單/資金</span>
   </div>
   <div class="header-right">
@@ -23,6 +24,11 @@
       <div class="ba">
         <span class="ba-item bid"><span class="ba-label">Bid</span><span id="price-bid">--</span></span>
         <span class="ba-item ask"><span class="ba-label">Ask</span><span id="price-ask">--</span></span>
+      </div>
+      <div class="ohl">
+        <span class="ohl-item"><span class="ohl-label">開</span><span id="price-open">--</span></span>
+        <span class="ohl-item"><span class="ohl-label">高</span><span id="price-high">--</span></span>
+        <span class="ohl-item"><span class="ohl-label">低</span><span id="price-low">--</span></span>
       </div>
     </div>
     <div class="user-menu">
@@ -69,11 +75,25 @@
         <button class="chart-candle-range-btn" data-candle-range="120">近2小時</button>
         <button class="chart-candle-range-btn" data-candle-range="240">近4小時</button>
       </div>
+      <div class="chart-modes hidden" id="chart-indicator-group">
+        <button class="chart-bbands-toggle" id="bbands-toggle">布林通道</button>
+        <select class="chart-subpanel-select" id="chart-subpanel-select">
+          <option value="off">副圖:無</option>
+          <option value="kd">KD</option>
+          <option value="macd">MACD</option>
+          <option value="rsi">RSI</option>
+        </select>
+      </div>
       <div class="chart-legend" id="chart-legend"></div>
     </div>
     <div class="chart-canvas-wrap">
       <canvas id="chart"></canvas>
       <div class="chart-tooltip hidden" id="chart-tooltip"></div>
+      <div class="session-toast" id="session-toast"></div>
+    </div>
+    <div class="chart-subpanel-wrap hidden" id="chart-subpanel-wrap">
+      <div class="chart-legend" id="chart-subpanel-legend"></div>
+      <canvas id="chart-subpanel"></canvas>
     </div>
   </section>
 
@@ -87,6 +107,11 @@
         <div class="label">已用保證金</div><div class="value" id="acc-used-margin">--</div>
         <div class="label">可用保證金</div><div class="value" id="acc-free-margin">--</div>
       </div>
+    </div>
+
+    <div class="panel">
+      <h2>五檔 Depth</h2>
+      <div class="depth-ladder" id="depth-ladder"></div>
     </div>
 
     <div class="panel">
@@ -199,6 +224,6 @@
   </div>
 </div>
 
-<script src="app.js?v=4"></script>
+<script src="app.js?v=11"></script>
 </body>
 </html>
