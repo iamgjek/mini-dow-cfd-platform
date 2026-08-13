@@ -29,6 +29,7 @@ class PriceEngine:
     """
 
     def __init__(self) -> None:
+        self.symbol: str = config.TF_SYMBOL
         self.mid: float = 0.0
         self.bid: float = 0.0
         self.ask: float = 0.0
@@ -44,6 +45,21 @@ class PriceEngine:
 
     def latest_tick(self) -> Tick:
         return Tick(ts=time.time(), mid=self.mid, bid=self.bid, ask=self.ask)
+
+    def set_symbol(self, new_symbol: str) -> None:
+        """Switch which feed symbol this engine tracks (contract rollover).
+
+        A different symbol is a different instrument's price series, so the
+        stale mid/bid/ask and tick history are cleared rather than carried
+        over — otherwise a chart/mark price would silently mix two
+        different contracts' prices.
+        """
+        logger.info("switching tracked symbol: %s -> %s", self.symbol, new_symbol)
+        self.symbol = new_symbol
+        self.mid = 0.0
+        self.bid = 0.0
+        self.ask = 0.0
+        self.history.clear()
 
     def _connect_string(self) -> str:
         if not config.TF_USERNAME or not config.TF_PASSWORD:
@@ -64,7 +80,7 @@ class PriceEngine:
         # {header, time, code, name, ...29 quote fields..., footer} == 36 fields.
         if len(parts) < 36 or parts[0] == "A":
             return  # too short to be a quote row, or an "A,OK,..." info packet
-        if parts[2] != config.TF_SYMBOL:
+        if parts[2] != self.symbol:
             return
 
         try:

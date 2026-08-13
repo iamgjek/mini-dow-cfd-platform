@@ -221,6 +221,29 @@
         }
         break;
       }
+      // Monthly contract rollover: the backend force-closed every open
+      // position and switched which feed symbol it tracks. Its tick
+      // history was cleared server-side too (different contract, different
+      // price series), so mirror that here rather than let the chart keep
+      // showing the expired contract's prices under the new symbol's label.
+      case "instrument": {
+        $("instrument-name").textContent = msg.data.name;
+        $("instrument-symbol").textContent = msg.data.symbol;
+        state.multiplier = msg.data.multiplier;
+        setSide(state.side);
+        state.history = [];
+        state.session = "day";
+        state.sessionManual = false;
+        syncSessionButtons();
+        state.lastTick = null;
+        $("price-mid").textContent = "--";
+        $("price-bid").textContent = "--";
+        $("price-ask").textContent = "--";
+        $("price-chg").textContent = "--";
+        $("price-chg").className = "chg";
+        drawChart();
+        break;
+      }
       case "trade":
         state.trades.unshift(msg.data);
         renderHoldings();

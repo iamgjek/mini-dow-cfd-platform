@@ -9,7 +9,7 @@ from fastapi import Depends, FastAPI, HTTPException, Response, WebSocket, WebSoc
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import auth, config, db
+from . import auth, config, db, rollover
 from .engine_manager import EngineManager
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -50,6 +50,15 @@ def _broadcast_to_user(user_id: int, kind: str, payload: object) -> None:
         asyncio.run_coroutine_threadsafe(_safe_send(ws, message), _main_loop)
 
 
+def _broadcast_to_all(kind: str, payload: object) -> None:
+    if _main_loop is None:
+        return
+    message = json.dumps({"type": kind, "data": _serialize(payload)}, default=str)
+    for clients in list(_ws_clients.values()):
+        for ws in list(clients):
+            asyncio.run_coroutine_threadsafe(_safe_send(ws, message), _main_loop)
+
+
 async def _safe_send(ws: WebSocket, message: str) -> None:
     try:
         await ws.send_text(message)
@@ -65,9 +74,11 @@ async def lifespan(app: FastAPI):
     global _main_loop
     db.init_db()
     _main_loop = asyncio.get_event_loop()
-    task = asyncio.create_task(price_engine.run())
+    feed_task = asyncio.create_task(price_engine.run())
+    rollover_task = asyncio.create_task(rollover.run_rollover_loop(engine_manager, price_engine, _broadcast_to_all))
     yield
-    task.cancel()
+    feed_task.cancel()
+    rollover_task.cancel()
 
 
 app = FastAPI(title="Micro TAIEX (微小台指) Paper Trading Platform", lifespan=lifespan)
@@ -157,7 +168,7 @@ class ClosePositionRequest(BaseModel):
 @app.get("/api/instrument")
 def get_instrument():
     return {
-        "symbol": config.INSTRUMENT_SYMBOL,
+        "symbol": price_engine.symbol,
         "name": config.INSTRUMENT_NAME,
         "tick_size": config.TICK_SIZE,
         "multiplier": config.CONTRACT_MULTIPLIER,

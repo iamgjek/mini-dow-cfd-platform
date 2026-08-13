@@ -234,6 +234,11 @@ def save_position(user_id: int, qty: float, avg_price: float, stop_loss: Optiona
     )
 
 
+def user_ids_with_open_position() -> list:
+    rows = _execute("SELECT user_id FROM positions WHERE qty != 0").fetchall()
+    return [r["user_id"] for r in rows]
+
+
 # --- orders / trades -----------------------------------------------------------
 
 def insert_order(user_id: int, order: dict[str, Any]) -> int:

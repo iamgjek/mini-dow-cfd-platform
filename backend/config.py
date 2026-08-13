@@ -7,7 +7,11 @@ orders are matched locally in-memory/DB, no order ever reaches a real
 exchange, and no real money is at risk.
 """
 
+import datetime as _dt
 import os
+
+from .contract_calendar import TAIPEI as _TAIPEI
+from .contract_calendar import symbol_for as _symbol_for
 
 # --- live quote feed (real, third-party data — see price_engine.py) ----------
 
@@ -17,22 +21,27 @@ TF_MARKET = os.environ.get("TF_MARKET", "TF")
 TF_USERNAME = os.environ.get("TF_USERNAME", "")
 TF_PASSWORD = os.environ.get("TF_PASSWORD", "")
 
-# Which symbol on the feed to trade. TFFITMQ+ = 微小台指 (Micro TAIEX
-# futures, 2026-08 contract). This is a fixed-month code, not the
-# auto-rolling "當月" one (that would be TFFITM1) — it stops updating once
-# this contract expires and TF_SYMBOL needs to be bumped to the next
-# month's code by hand. Other codes seen on this feed include TFFITX1
+# Which symbol on the feed to trade. TFFITM<month-code>+ = 微小台指 (Micro
+# TAIEX futures) for a specific contract month — e.g. TFFITMQ+ = 2026-08.
+# This platform trades the near-month contract and rolls to next month's
+# code automatically at runtime (see rollover.py, driven by the calendar
+# rule in contract_calendar.py), so the default below is *computed* from
+# today's date rather than a hardcoded string — it stays correct across
+# restarts/redeploys even before the rollover loop has run this process
+# lifetime. Set TF_SYMBOL explicitly to override (e.g. to pin a specific
+# contract for testing). Other codes seen on this feed include TFFITX1
 # (大台指/standard TAIEX futures) and TFFIMTX8 (小台指/Mini TAIEX, current
 # month, auto-rolling — what this app used before switching to the micro
 # contract).
-TF_SYMBOL = os.environ.get("TF_SYMBOL", "TFFITMQ+")
+TF_SYMBOL = os.environ.get("TF_SYMBOL", _symbol_for(_dt.datetime.now(_TAIPEI).date()))
 
 TF_HEARTBEAT_SECONDS = 120
 MAX_TICK_HISTORY = 20_000
 
 # --- simulated trading/account parameters -------------------------------------
 
-INSTRUMENT_SYMBOL = TF_SYMBOL
+# The live traded symbol is price_engine.symbol (mutable — see rollover.py),
+# not this. TF_SYMBOL above only seeds its *initial* value at startup.
 INSTRUMENT_NAME = "微小台指"
 TICK_SIZE = 1.0
 
