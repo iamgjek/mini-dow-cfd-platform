@@ -557,6 +557,22 @@
     return Array.from(bins.values()).sort((a, b) => a.t - b.t);
   }
 
+  // x is a time scale now (not evenly spaced by index), so hit-testing a
+  // mouse pixel back to "which point" needs a nearest-timestamp search
+  // rather than a direct proportional index calculation.
+  function findNearestIndexByTime(timestamps, t) {
+    let lo = 0, hi = timestamps.length - 1;
+    if (t <= timestamps[0]) return 0;
+    if (t >= timestamps[hi]) return hi;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (timestamps[mid] < t) lo = mid + 1;
+      else hi = mid;
+    }
+    if (lo > 0 && Math.abs(timestamps[lo - 1] - t) <= Math.abs(timestamps[lo] - t)) return lo - 1;
+    return lo;
+  }
+
   function fmtClock(ts) {
     return new Date(ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   }
@@ -642,7 +658,20 @@
     const marginRight = 52, marginBottom = 22, marginTop = 6;
     const plotW = w - marginRight, plotH = h - marginBottom - marginTop;
     const n = plotData.length;
-    state.lastLayout = { n, plotW, isCandle };
+
+    // Real ticks don't arrive on a steady cadence — a burst of updates
+    // shouldn't visually stretch that stretch of time out relative to a
+    // quiet period. x is placed by actual elapsed time, not by point
+    // index/count, so the axis stays a true (if non-uniformly sampled)
+    // time scale; a gap in trading shows as blank space rather than
+    // silently pulling its neighbors together.
+    const tOf = (i) => (isCandle ? candles[i].t : linePoints[i].ts);
+    const tStart = tOf(0);
+    const tSpan = tOf(n - 1) - tStart || 1;
+    const xOfTime = (t) => ((t - tStart) / tSpan) * plotW;
+    const x = (i) => xOfTime(tOf(i));
+
+    state.lastLayout = { n, plotW, isCandle, tStart, tSpan, ts: plotData.map((_, i) => tOf(i)) };
 
     const maSeries = isCandle
       ? MA_STYLES.map((s) => ({ color: s.color, values: sma(candles.map((c) => c.c), s.period) }))
@@ -664,9 +693,7 @@
     const pad = (max - min) * 0.12 || 1;
     const lo = min - pad, hi = max + pad;
 
-    const x = (i) => (n === 1 ? plotW / 2 : (i / (n - 1)) * plotW);
     const y = (v) => marginTop + plotH - ((v - lo) / (hi - lo)) * plotH;
-    const tOf = (i) => (isCandle ? candles[i].t : linePoints[i].ts);
 
     ctx.strokeStyle = "#2a3140";
     ctx.lineWidth = 1;
@@ -682,15 +709,21 @@
       ctx.fillText(fmt(v, 1), plotW + 4, yy + 3);
     }
 
+    // Evenly spaced in *time*, not in point index, so the printed clock
+    // times are actually evenly spaced left-to-right.
     const labelCount = Math.min(5, n);
     for (let k = 0; k < labelCount; k++) {
-      const idx = Math.round((k / (labelCount - 1 || 1)) * (n - 1));
-      const xx = x(idx);
-      ctx.fillText(fmtClock(tOf(idx)), Math.min(Math.max(xx - 18, 0), plotW - 34), h - 4);
+      const t = tStart + (tSpan * k) / (labelCount - 1 || 1);
+      const xx = xOfTime(t);
+      ctx.fillText(fmtClock(t), Math.min(Math.max(xx - 18, 0), plotW - 34), h - 4);
     }
 
     if (isCandle) {
-      const candleW = Math.max(1, Math.min(12, (plotW / n) * 0.7));
+      // Width per candle is derived from time-per-pixel now that x is a
+      // real time scale, not from plotW/n — a gap in trading shouldn't
+      // make surrounding candles balloon to fill the freed-up space.
+      const pixelsPerInterval = (plotW / tSpan) * state.candleIntervalSeconds;
+      const candleW = Math.max(1, Math.min(12, pixelsPerInterval * 0.7));
       const wickWidth = Math.max(1, Math.min(1.6, candleW * 0.14));
       candles.forEach((c, i) => {
         const xx = Math.round(x(i));
@@ -910,9 +943,9 @@
     if (!state.lastLayout) return;
     const rect = chartCanvas.getBoundingClientRect();
     const mx = e.clientX - rect.left;
-    const { n, plotW } = state.lastLayout;
-    const idx = Math.round((mx / plotW) * (n - 1));
-    state.hoverIndex = Math.min(Math.max(idx, 0), n - 1);
+    const { plotW, tStart, tSpan, ts } = state.lastLayout;
+    const frac = Math.min(Math.max(mx / plotW, 0), 1);
+    state.hoverIndex = findNearestIndexByTime(ts, tStart + frac * tSpan);
     drawChart();
   });
   chartCanvas.addEventListener("mouseleave", () => {
