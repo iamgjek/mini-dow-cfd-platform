@@ -16,6 +16,7 @@ from .engine_manager import EngineManager
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 from .models import (
     AdjustBalanceRequest,
+    CreateUserRequest,
     LoginRequest,
     Order,
     OrderType,
@@ -23,6 +24,7 @@ from .models import (
     SetRoleRequest,
     Side,
     UpdateSettingsRequest,
+    UpdateUserRequest,
 )
 from .price_engine import PriceEngine, Tick
 
@@ -299,6 +301,28 @@ def admin_list_users(admin: dict = Depends(auth.require_admin)):
     return result
 
 
+@app.post("/api/admin/users", status_code=201)
+def admin_create_user(req: CreateUserRequest, admin: dict = Depends(auth.require_admin)):
+    email = req.email.strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="invalid email")
+    if len(req.password) < 6:
+        raise HTTPException(status_code=400, detail="password must be at least 6 characters")
+    if not req.display_name.strip():
+        raise HTTPException(status_code=400, detail="display name required")
+    if db.get_user_by_email(email) is not None:
+        raise HTTPException(status_code=409, detail="email already registered")
+    if req.initial_balance is not None and req.initial_balance < 0:
+        raise HTTPException(status_code=400, detail="initial_balance cannot be negative")
+
+    balance = req.initial_balance if req.initial_balance is not None else float(
+        db.get_setting("initial_balance", str(config.INITIAL_BALANCE))
+    )
+    password_hash, salt = auth.hash_password(req.password)
+    user = db.create_user(email, password_hash, salt, req.display_name.strip(), req.role, balance)
+    return user_to_dict(user)
+
+
 @app.get("/api/admin/users/{user_id}")
 def admin_user_detail(user_id: int, admin: dict = Depends(auth.require_admin)):
     row = db.get_user_by_id(user_id)
@@ -312,6 +336,32 @@ def admin_user_detail(user_id: int, admin: dict = Depends(auth.require_admin)):
         "orders": engine.orders[:50],
         "trades": engine.trades[:50],
     }
+
+
+@app.put("/api/admin/users/{user_id}")
+def admin_update_user(user_id: int, req: UpdateUserRequest, admin: dict = Depends(auth.require_admin)):
+    row = db.get_user_by_id(user_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="user not found")
+
+    display_name = req.display_name.strip() if req.display_name is not None else row["display_name"]
+    email = req.email.strip().lower() if req.email is not None else row["email"]
+    if not display_name:
+        raise HTTPException(status_code=400, detail="display name required")
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="invalid email")
+    existing = db.get_user_by_email(email)
+    if existing is not None and existing["id"] != user_id:
+        raise HTTPException(status_code=409, detail="email already registered")
+    db.update_user_profile(user_id, display_name, email)
+
+    if req.password:
+        if len(req.password) < 6:
+            raise HTTPException(status_code=400, detail="password must be at least 6 characters")
+        password_hash, salt = auth.hash_password(req.password)
+        db.update_user_password(user_id, password_hash, salt)
+
+    return user_to_dict(db.get_user_by_id(user_id))
 
 
 @app.post("/api/admin/users/{user_id}/adjust-balance")

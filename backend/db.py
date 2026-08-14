@@ -191,6 +191,14 @@ def set_user_role(user_id: int, role: str) -> None:
     _execute("UPDATE users SET role = %s WHERE id = %s", (role, user_id))
 
 
+def update_user_profile(user_id: int, display_name: str, email: str) -> None:
+    _execute("UPDATE users SET display_name = %s, email = %s WHERE id = %s", (display_name, email, user_id))
+
+
+def update_user_password(user_id: int, password_hash: str, salt: str) -> None:
+    _execute("UPDATE users SET password_hash = %s, salt = %s WHERE id = %s", (password_hash, salt, user_id))
+
+
 def count_admins() -> int:
     return _execute("SELECT COUNT(*) c FROM users WHERE role = 'admin'").fetchone()["c"]
 

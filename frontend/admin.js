@@ -5,6 +5,8 @@
 
   let currentUserId = null;
   let currentAdminId = null;
+  let allUsers = [];
+  let searchQuery = "";
 
   async function api(path, opts) {
     const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...opts });
@@ -60,14 +62,33 @@
     $("stat-exposure").textContent = s.total_open_contracts;
   }
 
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  function matchesSearch(u, query) {
+    if (!query) return true;
+    const q = query.toLowerCase();
+    return u.email.toLowerCase().includes(q) || u.display_name.toLowerCase().includes(q);
+  }
+
   async function loadUsers() {
-    const users = await api("/api/admin/users");
+    allUsers = await api("/api/admin/users");
+    renderUsersTable();
+  }
+
+  function renderUsersTable() {
     const body = $("users-body");
-    if (!users.length) {
+    const filtered = allUsers.filter((u) => matchesSearch(u, searchQuery));
+    if (!allUsers.length) {
       body.innerHTML = '<tr class="empty-row"><td colspan="9">尚無會員</td></tr>';
       return;
     }
-    body.innerHTML = users
+    if (!filtered.length) {
+      body.innerHTML = '<tr class="empty-row"><td colspan="9">找不到符合的會員</td></tr>';
+      return;
+    }
+    body.innerHTML = filtered
       .map((u) => {
         const isSelf = u.id === currentAdminId;
         const roleSelect = `<select class="mini-btn" data-role="${u.id}" ${isSelf ? "disabled title=\"無法變更自己的角色\"" : ""}>
@@ -77,13 +98,13 @@
         const statusBadge = u.is_active ? "" : '<span class="badge disabled">停用</span>';
         const upnl = u.account.unrealized_pnl;
         return `<tr class="clickable" data-id="${u.id}">
-          <td style="text-align:left;">${u.email}</td>
-          <td style="text-align:left;">${u.display_name}</td>
+          <td style="text-align:left;">${escapeHtml(u.email)}</td>
+          <td style="text-align:left;">${escapeHtml(u.display_name)}</td>
           <td>${roleSelect}</td>
           <td>${statusBadge || "正常"}</td>
           <td>${fmt(u.account.balance)}</td>
-          <td>${fmt(u.account.equity)}</td>
-          <td class="${upnl > 0 ? "up" : upnl < 0 ? "down" : ""}">${fmt(upnl)}</td>
+          <td class="col-equity">${fmt(u.account.equity)}</td>
+          <td class="col-upnl ${upnl > 0 ? "up" : upnl < 0 ? "down" : ""}">${fmt(upnl)}</td>
           <td>${u.position_qty}</td>
           <td><button class="mini-btn" data-toggle="${u.id}" data-active="${u.is_active}" ${isSelf ? "disabled" : ""}>${u.is_active ? "停用" : "啟用"}</button></td>
         </tr>`;
@@ -138,6 +159,10 @@
       <div class="label">已用保證金</div><div class="value">${fmt(d.account.used_margin)}</div>
       <div class="label">部位</div><div class="value">${d.position.qty === 0 ? "Flat" : `${d.position.qty > 0 ? "多" : "空"} ${Math.abs(d.position.qty)} @ ${fmt(d.position.avg_price, 1)}`}</div>
     `;
+    $("edit-display-name").value = d.user.display_name;
+    $("edit-email").value = d.user.email;
+    $("edit-password").value = "";
+    $("edit-error").textContent = "";
     $("adjust-amount").value = "";
     $("adjust-reason").value = "";
     $("adjust-error").textContent = "";
@@ -178,12 +203,97 @@
     }
   }
 
+  async function submitEditUser() {
+    $("edit-error").textContent = "";
+    const display_name = $("edit-display-name").value.trim();
+    const email = $("edit-email").value.trim();
+    const password = $("edit-password").value;
+    if (!display_name) {
+      $("edit-error").textContent = "請輸入名稱";
+      return;
+    }
+    if (!email) {
+      $("edit-error").textContent = "請輸入 Email";
+      return;
+    }
+    try {
+      await api(`/api/admin/users/${currentUserId}`, {
+        method: "PUT",
+        body: JSON.stringify({ display_name, email, password: password || null }),
+      });
+      $("edit-password").value = "";
+      await openDetail(currentUserId);
+      await loadUsers();
+    } catch (err) {
+      $("edit-error").textContent = err.message;
+    }
+  }
+
+  function openCreateUser() {
+    $("create-display-name").value = "";
+    $("create-email").value = "";
+    $("create-password").value = "";
+    $("create-role").value = "user";
+    $("create-balance").value = "";
+    $("create-user-error").textContent = "";
+    $("create-user-modal").classList.remove("hidden");
+  }
+
+  async function submitCreateUser() {
+    $("create-user-error").textContent = "";
+    const display_name = $("create-display-name").value.trim();
+    const email = $("create-email").value.trim();
+    const password = $("create-password").value;
+    const role = $("create-role").value;
+    const balanceRaw = $("create-balance").value;
+    if (!display_name) {
+      $("create-user-error").textContent = "請輸入名稱";
+      return;
+    }
+    if (!email) {
+      $("create-user-error").textContent = "請輸入 Email";
+      return;
+    }
+    if (!password) {
+      $("create-user-error").textContent = "請輸入密碼";
+      return;
+    }
+    try {
+      await api("/api/admin/users", {
+        method: "POST",
+        body: JSON.stringify({
+          display_name,
+          email,
+          password,
+          role,
+          initial_balance: balanceRaw ? Number(balanceRaw) : null,
+        }),
+      });
+      $("create-user-modal").classList.add("hidden");
+      await loadUsers();
+      await loadStats();
+    } catch (err) {
+      $("create-user-error").textContent = err.message;
+    }
+  }
+
   $("modal-close").addEventListener("click", () => $("detail-modal").classList.add("hidden"));
   $("detail-modal").addEventListener("click", (e) => {
     if (e.target.id === "detail-modal") $("detail-modal").classList.add("hidden");
   });
   $("adjust-submit").addEventListener("click", submitAdjustment);
+  $("edit-submit").addEventListener("click", submitEditUser);
   $("settings-save").addEventListener("click", saveSettings);
+  $("open-create-user").addEventListener("click", openCreateUser);
+  $("create-user-close").addEventListener("click", () => $("create-user-modal").classList.add("hidden"));
+  $("create-user-modal").addEventListener("click", (e) => {
+    if (e.target.id === "create-user-modal") $("create-user-modal").classList.add("hidden");
+  });
+  $("create-user-submit").addEventListener("click", submitCreateUser);
+  $("user-search").addEventListener("input", (e) => {
+    searchQuery = e.target.value.trim();
+    renderUsersTable();
+  });
   $("avatar-btn").addEventListener("click", (e) => {
     e.stopPropagation();
     const dropdown = $("user-dropdown");

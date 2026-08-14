@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>管理後台 · 微小台指模擬交易平台</title>
-<link rel="stylesheet" href="style.css?v=3" />
+<link rel="stylesheet" href="style.css?v=4" />
 </head>
 <body>
 <header>
@@ -27,20 +27,29 @@
   </div>
 </header>
 
-<main style="grid-template-columns: 1fr;">
-  <section class="panel">
-    <h2>平台統計</h2>
-    <div class="stat-grid" id="stats-grid" style="grid-template-columns: repeat(4, 1fr);">
-      <div class="label">會員數</div><div class="value" id="stat-users">--</div>
-      <div class="label">總餘額</div><div class="value" id="stat-balance">--</div>
-      <div class="label">持有部位會員數</div><div class="value" id="stat-open">--</div>
-      <div class="label">總曝險口數</div><div class="value" id="stat-exposure">--</div>
+<main class="admin-main">
+  <section class="kpi-grid">
+    <div class="kpi-card">
+      <div class="kpi-label">會員數</div>
+      <div class="kpi-value" id="stat-users">--</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">總餘額</div>
+      <div class="kpi-value" id="stat-balance">--</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">持有部位會員數</div>
+      <div class="kpi-value" id="stat-open">--</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">總曝險口數</div>
+      <div class="kpi-value" id="stat-exposure">--</div>
     </div>
   </section>
 
   <section class="panel">
     <h2>平台設定</h2>
-    <div class="field-row" style="align-items: flex-end;">
+    <div class="field-row" style="align-items: flex-end; flex-wrap: wrap;">
       <div class="field" style="max-width: 220px;">
         <label for="setting-initial-balance">新會員初始保證金</label>
         <input type="number" id="setting-initial-balance" step="100" min="0" />
@@ -52,11 +61,17 @@
   </section>
 
   <section class="panel">
-    <h2>會員列表</h2>
+    <div class="table-toolbar">
+      <h2 style="margin:0;">會員列表</h2>
+      <div class="table-toolbar-actions">
+        <input type="search" id="user-search" placeholder="搜尋 email 或名稱..." />
+        <button class="mini-btn mini-btn-primary" id="open-create-user">+ 新增會員</button>
+      </div>
+    </div>
     <div class="admin-table-wrap">
       <table>
         <thead>
-          <tr><th style="text-align:left;">Email</th><th style="text-align:left;">名稱</th><th>角色</th><th>狀態</th><th>餘額</th><th>淨值</th><th>未實現損益</th><th>部位</th><th></th></tr>
+          <tr><th style="text-align:left;">Email</th><th style="text-align:left;">名稱</th><th>角色</th><th>狀態</th><th>餘額</th><th class="col-equity">淨值</th><th class="col-upnl">未實現損益</th><th>部位</th><th></th></tr>
         </thead>
         <tbody id="users-body"><tr class="empty-row"><td colspan="9">載入中...</td></tr></tbody>
       </table>
@@ -69,6 +84,18 @@
     <span class="modal-close" id="modal-close">✕</span>
     <h2 id="detail-title">會員詳情</h2>
     <div class="stat-grid" id="detail-account"></div>
+
+    <h2 style="margin-top:18px;">會員資料</h2>
+    <div class="field-row">
+      <div class="field"><label>名稱</label><input type="text" id="edit-display-name" /></div>
+      <div class="field"><label>Email</label><input type="email" id="edit-email" /></div>
+    </div>
+    <div class="field">
+      <label>重設密碼(留空表示不變更)</label>
+      <input type="password" id="edit-password" placeholder="至少 6 碼" autocomplete="new-password" />
+    </div>
+    <button class="mini-btn" id="edit-submit" style="width:100%;">儲存會員資料</button>
+    <div id="edit-error" style="color: var(--down); font-size: 12px; margin-top: 6px;"></div>
 
     <h2 style="margin-top:18px;">調整餘額(模擬入金/扣款)</h2>
     <div class="field-row">
@@ -92,6 +119,33 @@
   </div>
 </div>
 
-<script src="admin.js?v=3"></script>
+<div class="modal-backdrop hidden" id="create-user-modal">
+  <div class="modal">
+    <span class="modal-close" id="create-user-close">✕</span>
+    <h2>新增會員</h2>
+    <div class="field-row">
+      <div class="field"><label>名稱</label><input type="text" id="create-display-name" /></div>
+      <div class="field"><label>Email</label><input type="email" id="create-email" /></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>密碼</label><input type="password" id="create-password" placeholder="至少 6 碼" autocomplete="new-password" /></div>
+      <div class="field">
+        <label>角色</label>
+        <select id="create-role">
+          <option value="user" selected>user</option>
+          <option value="admin">admin</option>
+        </select>
+      </div>
+    </div>
+    <div class="field">
+      <label>初始保證金(留空套用平台預設值)</label>
+      <input type="number" id="create-balance" step="100" min="0" />
+    </div>
+    <button class="mini-btn mini-btn-primary" id="create-user-submit" style="width:100%;">建立會員</button>
+    <div id="create-user-error" style="color: var(--down); font-size: 12px; margin-top: 6px;"></div>
+  </div>
+</div>
+
+<script src="admin.js?v=4"></script>
 </body>
 </html>

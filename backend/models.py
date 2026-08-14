@@ -93,3 +93,17 @@ class SetRoleRequest(BaseModel):
 
 class UpdateSettingsRequest(BaseModel):
     initial_balance: float
+
+
+class CreateUserRequest(BaseModel):
+    email: str
+    password: str
+    display_name: str
+    role: Literal["user", "admin"] = "user"
+    initial_balance: Optional[float] = None
+
+
+class UpdateUserRequest(BaseModel):
+    display_name: Optional[str] = None
+    email: Optional[str] = None
+    password: Optional[str] = None

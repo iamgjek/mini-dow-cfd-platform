@@ -381,10 +381,26 @@ th { color: var(--muted); font-weight: 500; }
   .price-readout .mid { font-size: 19px; }
 
   .stat-grid { grid-template-columns: 1fr 1fr; }
-  #stats-grid { grid-template-columns: 1fr 1fr !important; }
+  /* .kpi-grid's unconditional 4-column rule is declared later in this file
+     (source order wins ties over media-query rules at equal specificity),
+     so this override needs !important to actually take effect here. */
+  .kpi-grid { grid-template-columns: 1fr 1fr !important; }
+  .kpi-value { font-size: 20px; }
 
   .modal-backdrop { padding: 16px; }
   .modal { max-height: 85vh; }
+
+  .table-toolbar { flex-direction: column; align-items: stretch; }
+  .table-toolbar-actions { justify-content: space-between; }
+  #user-search { flex: 1; min-width: 0; }
+
+  /* A 9-column table has no room to breathe on a phone — horizontal
+     scroll works, but the least essential columns (淨值/未實現損益) just
+     add scrolling distance to reach the action button, so drop them. */
+  th.col-equity, td.col-equity,
+  th.col-upnl, td.col-upnl {
+    display: none;
+  }
 }
 
 .auth-shell {
@@ -483,9 +499,61 @@ th { color: var(--muted); font-weight: 500; }
 }
 .user-dropdown-item:hover { background: var(--panel); }
 
+.admin-main {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.kpi-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px 18px;
+  border-top: 3px solid var(--accent);
+}
+.kpi-label {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 8px;
+  /* CJK labels have no spaces to wrap on, so a narrow card would otherwise
+     wrap them one character per line; truncate instead. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.kpi-value { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+.table-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.table-toolbar-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+#user-search {
+  padding: 7px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--panel-alt);
+  color: var(--text);
+  font-size: 13px;
+  min-width: 200px;
+}
+
+.mini-btn-primary { background: var(--accent); color: #06122b; border-color: var(--accent); font-weight: 700; }
+.mini-btn-primary:hover { opacity: 0.9; }
+
 .admin-table-wrap { overflow-x: auto; }
 tr.clickable { cursor: pointer; }
 tr.clickable:hover { background: var(--panel-alt); }
+tr.row-hidden { display: none; }
 
 .clickable-card { cursor: pointer; border-radius: 8px; margin: -6px; padding: 6px; transition: background 0.1s; }
 .clickable-card:hover { background: var(--panel-alt); }
