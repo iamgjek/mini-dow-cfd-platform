@@ -92,6 +92,7 @@ class TradingEngine:
         limit_price: Optional[float] = None,
         stop_loss: Optional[float] = None,
         take_profit: Optional[float] = None,
+        _fill_at: Optional[float] = None,
     ) -> Order:
         if qty <= 0:
             raise ValueError("qty must be positive")
@@ -110,11 +111,19 @@ class TradingEngine:
         self.orders.insert(0, order)
         self._emit("order", order)
 
-        tick = self._last_prices()
-        if order_type == OrderType.MARKET:
+        if _fill_at is not None:
+            # Caller (a SL/TP trigger) already confirmed the mark price has
+            # reached this level this tick — fill at that exact price rather
+            # than re-deriving one, since a plain limit-fill check would
+            # actually run backwards for a stop-loss (it fires on price
+            # moving against the position, the opposite of when a resting
+            # limit order at that price would naturally cross).
+            self._try_fill(order, _fill_at)
+        elif order_type == OrderType.MARKET:
+            tick = self._last_prices()
             self._try_fill(order, tick.ask if side == Side.BUY else tick.bid)
         else:
-            self._try_limit_fill(order, tick)
+            self._try_limit_fill(order, self._last_prices())
         return order
 
     def cancel_order(self, order_id: int) -> Order:
@@ -157,11 +166,15 @@ class TradingEngine:
         self._emit("account", snapshot)
         return snapshot
 
-    def close_position(self, qty: Optional[float] = None) -> Optional[Order]:
+    def close_position(self, qty: Optional[float] = None, trigger_price: Optional[float] = None) -> Optional[Order]:
         if self.position.qty == 0:
             return None
         close_qty = abs(self.position.qty) if qty is None else min(qty, abs(self.position.qty))
         side = Side.SELL if self.position.qty > 0 else Side.BUY
+        if trigger_price is not None:
+            # SL/TP close: fill at the price the user configured, not
+            # whatever the live tick happens to be at the moment it triggers.
+            return self.place_order(side, OrderType.LIMIT, close_qty, limit_price=trigger_price, _fill_at=trigger_price)
         return self.place_order(side, OrderType.MARKET, close_qty)
 
     def _find_order(self, order_id: int) -> Order:
@@ -273,7 +286,7 @@ class TradingEngine:
                 (self.position.qty > 0 and mark >= tp) or (self.position.qty < 0 and mark <= tp)
             )
             if hit_sl or hit_tp:
-                self.close_position()
+                self.close_position(trigger_price=sl if hit_sl else tp)
 
         self._emit("tick", tick)
         self._emit("account", self.account_snapshot())
