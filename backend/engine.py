@@ -129,6 +129,21 @@ class TradingEngine:
     def update_position_risk(self, stop_loss: Optional[float], take_profit: Optional[float]) -> Position:
         if self.position.qty == 0:
             raise ValueError("no open position")
+
+        # A SL/TP that's already crossed relative to the live mark would trigger
+        # on_tick() on the very next tick and close the position as a market
+        # order right away, instead of waiting for price to actually reach it —
+        # reject it here so the user gets an explicit error instead of a
+        # surprise "current price" fill.
+        tick = self._last_prices()
+        mark = tick.bid if self.position.qty > 0 else tick.ask
+        if mark > 0:
+            long = self.position.qty > 0
+            if stop_loss is not None and ((long and stop_loss >= mark) or (not long and stop_loss <= mark)):
+                raise ValueError("stop_loss is already past the current price")
+            if take_profit is not None and ((long and take_profit <= mark) or (not long and take_profit >= mark)):
+                raise ValueError("take_profit is already past the current price")
+
         self.position.stop_loss = stop_loss
         self.position.take_profit = take_profit
         self._save_position()
