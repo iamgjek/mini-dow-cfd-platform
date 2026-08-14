@@ -13,10 +13,12 @@
     modalRecordQty: null,
     recordTab: "holdings",
     lastTick: null,
-    // 台指期日盤/夜盤: which session the chart is currently showing.
-    // Auto-follows the live session until the user manually picks one.
+    // 台指期日盤/夜盤: which session the chart is currently showing. Always
+    // auto-follows the live session — there's no manual picker, since the
+    // "other" session usually just has no data yet (see docs/trading-info-
+    // chart-spec.md). Stays on the last real session through the closed
+    // gaps between sessions, since no ticks arrive to change it then.
     session: "day",
-    sessionManual: false,
     // Technical indicators (K線 only). Bollinger overlays the main chart;
     // subpanel is a single switchable panel (KD/MACD/RSI), not simultaneous
     // multiple panels — see docs/trading-info-chart-spec.md P0-11/P0-12.
@@ -107,12 +109,6 @@
     }
 
     return { points: historyArr.slice(startIdx, endIdx + 1), prevClose, blockKey };
-  }
-
-  function syncSessionButtons() {
-    document.querySelectorAll(".chart-session-btn").forEach((btn) => {
-      btn.classList.toggle("active", btn.dataset.session === state.session);
-    });
   }
 
   // Quote-header badge + 開/高/低 for whichever session is currently shown —
@@ -235,8 +231,6 @@
         state.history = d.history.map((p) => Object.assign({}, p, taipeiClassify(p.ts)));
         state.session = state.history.length ? state.history[state.history.length - 1].session : "day";
         if (state.session === "closed") state.session = "day";
-        state.sessionManual = false;
-        syncSessionButtons();
         renderSessionStats();
         if (d.tick && d.tick.mid) renderPrice(d.tick);
         state.account = d.account;
@@ -250,9 +244,8 @@
         const info = taipeiClassify(msg.data.ts);
         state.history.push({ ts: msg.data.ts, price: msg.data.mid, session: info.session, blockKey: info.blockKey });
         if (state.history.length > 20000) state.history.shift(); // keep in sync with backend MAX_TICK_HISTORY
-        if (!state.sessionManual && info.session !== "closed" && info.session !== state.session) {
+        if (info.session !== "closed" && info.session !== state.session) {
           state.session = info.session;
-          syncSessionButtons();
           showSessionToast(info.session === "night" ? "已轉為夜盤" : "已轉為日盤");
         }
         renderSessionStats(); // 開/高/低 can extend on every tick, not just on session change
@@ -296,8 +289,6 @@
         setSide(state.side);
         state.history = [];
         state.session = "day";
-        state.sessionManual = false;
-        syncSessionButtons();
         renderSessionStats();
         state.lastTick = null;
         $("price-mid").textContent = "--";
@@ -1225,16 +1216,6 @@
     saveIndicatorPrefs();
     updateIndicatorVisibility();
     updateChart();
-  });
-
-  document.querySelectorAll(".chart-session-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      state.session = btn.dataset.session;
-      state.sessionManual = true;
-      syncSessionButtons();
-      renderSessionStats();
-      updateChart();
-    });
   });
 
   document.querySelectorAll(".record-tab-btn").forEach((btn) => {

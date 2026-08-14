@@ -137,7 +137,7 @@ main {
   padding: 2px 4px 8px;
 }
 .chart-modes { display: flex; gap: 6px; }
-.chart-mode-btn, .chart-session-btn {
+.chart-mode-btn {
   padding: 5px 10px;
   font-size: 12px;
   border-radius: 6px;
@@ -146,7 +146,7 @@ main {
   color: var(--muted);
   cursor: pointer;
 }
-.chart-mode-btn.active, .chart-session-btn.active { background: #17233a; color: var(--accent); border-color: var(--accent); }
+.chart-mode-btn.active { background: #17233a; color: var(--accent); border-color: var(--accent); }
 
 #chart-interval-group.hidden { display: none; }
 .chart-interval-btn {
