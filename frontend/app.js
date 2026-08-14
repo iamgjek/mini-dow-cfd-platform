@@ -449,7 +449,8 @@
   function openPositionModal(recordQty = null) {
     if (state.position.qty === 0) return;
     $("modal-pos-error").textContent = "";
-    $("modal-pos-trigger").value = "";
+    const mark = markPriceForPosition();
+    $("modal-pos-trigger").value = mark ?? "";
     state.positionModalOpen = true;
     state.modalRecordQty = recordQty;
     renderPositionModalStats();
