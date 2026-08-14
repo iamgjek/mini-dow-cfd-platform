@@ -11,6 +11,7 @@
     candleIntervalSeconds: 60,
     positionModalOpen: false,
     modalRecordQty: null,
+    modalRiskMark: null,
     recordTab: "holdings",
     lastTick: null,
     // 台指期日盤/夜盤: which session the chart is currently showing. Always
@@ -451,6 +452,13 @@
     $("modal-pos-error").textContent = "";
     const mark = markPriceForPosition();
     $("modal-pos-trigger").value = mark ?? "";
+    // Freeze the reference price used to classify SL vs TP at the value
+    // shown in the field. The live mark keeps ticking while the modal is
+    // open, so re-reading it at submit time would make classification (and
+    // the "same as market" rejection) depend on whatever the price happens
+    // to be at the exact instant of the click — that flakily rejected
+    // clean edits when the feed ticked back onto the prefilled value.
+    state.modalRiskMark = mark;
     state.positionModalOpen = true;
     state.modalRecordQty = recordQty;
     renderPositionModalStats();
@@ -1180,7 +1188,7 @@
       return;
     }
     const price = Number(raw);
-    const mark = markPriceForPosition();
+    const mark = state.modalRiskMark;
     if (mark == null) {
       $("modal-pos-error").textContent = "尚未取得市價，請稍後再試";
       return;
