@@ -350,12 +350,11 @@ th { color: var(--muted); font-weight: 500; }
 
 @media (max-width: 900px) {
   main { grid-template-columns: 1fr; }
-  /* Single-column layout would otherwise stack in source order — chart
-     first, order ticket last — pushing the actual trading controls off the
-     first screen. Reorder so the account/order-ticket/position column
-     comes first; the chart (and its own toolbar) can be scrolled to. */
-  #chart-panel { order: 2; }
-  .sidebar { order: 1; }
+  /* Chart pinned to the top on mobile — checking price action is the first
+     thing a user wants on a small screen; the account/order-ticket/position
+     column and the holdings/orders/history tables follow below it. */
+  #chart-panel { order: 1; }
+  .sidebar { order: 2; }
   .wide-panels { order: 3; }
 }
 
