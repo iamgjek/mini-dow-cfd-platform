@@ -185,17 +185,17 @@
     </div>
 
     <h2 style="margin-top:18px;">停損 / 停利</h2>
+    <div class="value" id="modal-pos-current-risk" style="color: var(--muted); font-size: 13px; margin-bottom: 8px;">--</div>
     <div class="field-row">
-      <div class="field">
-        <label for="modal-pos-sl">停損 SL</label>
-        <input type="number" id="modal-pos-sl" step="1" />
-      </div>
-      <div class="field">
-        <label for="modal-pos-tp">停利 TP</label>
-        <input type="number" id="modal-pos-tp" step="1" />
+      <div class="field" style="flex:1;">
+        <label for="modal-pos-trigger">新的觸發價（自動判斷停損或停利）</label>
+        <input type="number" id="modal-pos-trigger" step="1" />
       </div>
     </div>
-    <button class="mini-btn" id="modal-pos-update-risk" style="width:100%;">更新停損/停利</button>
+    <div class="field-row">
+      <button class="mini-btn" id="modal-pos-update-risk" style="flex:1;">更新</button>
+      <button class="mini-btn" id="modal-pos-clear-risk" style="flex:1;">清除設定</button>
+    </div>
 
     <h2 style="margin-top:18px;">平倉</h2>
     <div class="field-row">
@@ -207,6 +207,6 @@
 </div>
 
 <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
-<script src="app.js?v=21"></script>
+<script src="app.js?v=22"></script>
 </body>
 </html>

@@ -426,6 +426,20 @@
     } else {
       recordBtn.classList.add("hidden");
     }
+
+    $("modal-pos-current-risk").textContent = `目前設定：${positionRiskLabel(p)}`;
+  }
+
+  // A single trigger-price input can't say by itself whether it's a stop-
+  // loss or take-profit — infer it from which side of the live mark it
+  // falls on for this position's direction (long: below mark = SL, above =
+  // TP; short: reversed). Equal to mark is ambiguous and rejected by the
+  // caller instead of guessing.
+  function classifyRiskPrice(price, mark) {
+    if (price === mark) return null;
+    const long = state.position.qty > 0;
+    if (long) return price < mark ? "stop_loss" : "take_profit";
+    return price > mark ? "stop_loss" : "take_profit";
   }
 
   // recordQty: the quantity tied to the specific order/trade row the user
@@ -435,8 +449,7 @@
   function openPositionModal(recordQty = null) {
     if (state.position.qty === 0) return;
     $("modal-pos-error").textContent = "";
-    $("modal-pos-sl").value = state.position.stop_loss ?? "";
-    $("modal-pos-tp").value = state.position.take_profit ?? "";
+    $("modal-pos-trigger").value = "";
     state.positionModalOpen = true;
     state.modalRecordQty = recordQty;
     renderPositionModalStats();
@@ -1160,10 +1173,37 @@
 
   async function submitUpdateRisk() {
     $("modal-pos-error").textContent = "";
-    const stop_loss = $("modal-pos-sl").value ? Number($("modal-pos-sl").value) : null;
-    const take_profit = $("modal-pos-tp").value ? Number($("modal-pos-tp").value) : null;
+    const raw = $("modal-pos-trigger").value;
+    if (!raw) {
+      $("modal-pos-error").textContent = "請輸入觸發價格";
+      return;
+    }
+    const price = Number(raw);
+    const mark = markPriceForPosition();
+    if (mark == null) {
+      $("modal-pos-error").textContent = "尚未取得市價，請稍後再試";
+      return;
+    }
+    const kind = classifyRiskPrice(price, mark);
+    if (kind == null) {
+      $("modal-pos-error").textContent = "觸發價需與目前市價不同，才能判斷是停損或停利";
+      return;
+    }
+    const stop_loss = kind === "stop_loss" ? price : state.position.stop_loss ?? null;
+    const take_profit = kind === "take_profit" ? price : state.position.take_profit ?? null;
     try {
       await api("/api/position/risk", { method: "PUT", body: JSON.stringify({ stop_loss, take_profit }) });
+      $("modal-pos-trigger").value = "";
+    } catch (err) {
+      $("modal-pos-error").textContent = err.message;
+    }
+  }
+
+  async function clearRisk() {
+    $("modal-pos-error").textContent = "";
+    try {
+      await api("/api/position/risk", { method: "PUT", body: JSON.stringify({ stop_loss: null, take_profit: null }) });
+      $("modal-pos-trigger").value = "";
     } catch (err) {
       $("modal-pos-error").textContent = err.message;
     }
@@ -1180,6 +1220,7 @@
     submitClosePosition(Math.min(state.modalRecordQty, Math.abs(state.position.qty)));
   });
   $("modal-pos-update-risk").addEventListener("click", submitUpdateRisk);
+  $("modal-pos-clear-risk").addEventListener("click", clearRisk);
   $("position-modal-close").addEventListener("click", hidePositionModal);
   $("position-modal").addEventListener("click", (e) => {
     if (e.target.id === "position-modal") hidePositionModal();
